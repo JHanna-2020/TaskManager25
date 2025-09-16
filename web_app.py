@@ -96,18 +96,45 @@ def index():
     """Main page showing all tasks"""
     tasks = []
     try:
-        docs = db.collection("tasks").stream()
+        # Show only active tasks (exclude Completed/Graded)
+        docs = db.collection("tasks").where("status", "in", ["Not Started", "In Progress"]).stream()
         for doc in docs:
             task = doc.to_dict()
             task['id'] = doc.id
             # Format dates for display
-            task['start_formatted'] = datetime.strptime(task.get("start"), "%Y-%m-%d %H:%M:%S").strftime("%m/%d/%y %I:%M %p")
-            task['due_formatted'] = datetime.strptime(task.get("due"), "%Y-%m-%d %H:%M:%S").strftime("%m/%d/%y %I:%M %p")
+            start_dt = datetime.strptime(task.get("start"), "%Y-%m-%d %H:%M:%S")
+            due_dt = datetime.strptime(task.get("due"), "%Y-%m-%d %H:%M:%S")
+            task['start_formatted'] = start_dt.strftime("%m/%d/%y %I:%M %p")
+            task['due_formatted'] = due_dt.strftime("%m/%d/%y %I:%M %p")
+            # ISO for client-side sorting
+            task['start_iso'] = start_dt.isoformat()
+            task['due_iso'] = due_dt.isoformat()
             tasks.append(task)
     except Exception as e:
         flash(f"Error loading tasks: {e}", "error")
     
-    return render_template('index.html', tasks=tasks)
+    return render_template('index.html', tasks=tasks, task_count=len(tasks))
+
+@app.route('/completed')
+def completed():
+    """Completed tasks page"""
+    tasks = []
+    try:
+        # Include both Completed and Graded in the completed view
+        docs = db.collection("tasks").where("status", "in", ["Completed", "Graded"]).stream()
+        for doc in docs:
+            task = doc.to_dict()
+            task['id'] = doc.id
+            start_dt = datetime.strptime(task.get("start"), "%Y-%m-%d %H:%M:%S")
+            due_dt = datetime.strptime(task.get("due"), "%Y-%m-%d %H:%M:%S")
+            task['start_formatted'] = start_dt.strftime("%m/%d/%y %I:%M %p")
+            task['due_formatted'] = due_dt.strftime("%m/%d/%y %I:%M %p")
+            task['start_iso'] = start_dt.isoformat()
+            task['due_iso'] = due_dt.isoformat()
+            tasks.append(task)
+    except Exception as e:
+        flash(f"Error loading completed tasks: {e}", "error")
+    return render_template('completed.html', tasks=tasks, task_count=len(tasks))
 
 @app.route('/add_task', methods=['GET', 'POST'])
 def add_task():
@@ -128,12 +155,17 @@ def add_task():
             start_dt = datetime.strptime(f"{start_date} {start_time}", "%Y-%m-%d %H:%M")
             due_dt = datetime.strptime(f"{due_date} {due_time}", "%Y-%m-%d %H:%M")
             
-            # Handle recurrence days
+            # Handle recurrence days, including weekly same-day option
             recurrence_days = 0
-            for day in ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']:
-                if request.form.get(f'recurrence_{day.lower()}'):
-                    day_map = {'mon': 1, 'tue': 2, 'wed': 4, 'thu': 8, 'fri': 16, 'sat': 32, 'sun': 64}
-                    recurrence_days |= day_map[day.lower()]
+            weekly_same_day = request.form.get('weekly_same_day') is not None
+            if weekly_same_day:
+                weekday_to_bit = {0: 1, 1: 2, 2: 4, 3: 8, 4: 16, 5: 32, 6: 64}  # Mon..Sun
+                recurrence_days = weekday_to_bit[due_dt.weekday()]
+            else:
+                for day in ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']:
+                    if request.form.get(f'recurrence_{day.lower()}'):
+                        day_map = {'mon': 1, 'tue': 2, 'wed': 4, 'thu': 8, 'fri': 16, 'sat': 32, 'sun': 64}
+                        recurrence_days |= day_map[day.lower()]
             
             # Create task
             task_ref = db.collection("tasks").add({
@@ -268,9 +300,43 @@ def delete_all_tasks():
         flash(f'Error deleting all tasks: {e}', 'error')
     return redirect(url_for('index'))
 
-# --- Email reminder functionality (simplified for web) ---
+@app.route('/test_email')
+def test_email():
+    """Test email functionality"""
+    try:
+        test_email_addr = os.getenv("EMAIL_USER")
+        if not test_email_addr:
+            flash('EMAIL_USER not found in .env file', 'error')
+            return redirect(url_for('index'))
+        
+        email_sent = send_email(
+            test_email_addr,
+            "Task Manager - Test Email",
+            "This is a test email from your Task Manager web application. If you receive this, your email setup is working correctly!"
+        )
+        
+        if email_sent:
+            flash(f'Test email sent successfully to {test_email_addr}!', 'success')
+        else:
+            flash('Failed to send test email. Check your .env file and email credentials.', 'error')
+            
+    except Exception as e:
+        flash(f'Error testing email: {e}', 'error')
+    
+    return redirect(url_for('index'))
+
+# --- Email reminder functionality ---
+def send_email(to_email, subject, body):
+    """Send email using the email_utils module"""
+    try:
+        from email_utils import send_email as send_email_func
+        return send_email_func(to_email, subject, body)
+    except Exception as e:
+        print(f"Failed to send email: {e}")
+        return False
+
 def reminder_loop():
-    """Background reminder loop (simplified version)"""
+    """Background reminder loop with email functionality"""
     global reminder_thread_running
     reminder_thread_running = True
     
@@ -287,10 +353,49 @@ def reminder_loop():
                 reminder_sent = task.get("reminder_sent", 0)
                 status = task.get("status", "Not Started")
                 
-                # Simple reminder logic (no email for web version)
+                # Email reminder logic with lock to prevent duplicates
                 if due - timedelta(hours=reminder_hours) <= now < due and status != "Completed" and reminder_sent == 0:
-                    print(f"Reminder: {task['name']} is due soon!")
-                    db.collection("tasks").document(task_id).update({"reminder_sent": 1})
+                    try:
+                        # Try to acquire email lock to prevent duplicate emails
+                        email_lock_key = f"email_lock_{task_id}_{due.strftime('%Y-%m-%d-%H')}"
+                        
+                        # Check if another device is already sending this reminder
+                        lock_doc = db.collection("email_locks").document(email_lock_key).get()
+                        if lock_doc.exists:
+                            # Another device is handling this reminder
+                            continue
+                        
+                        # Acquire the lock (expires in 1 hour)
+                        db.collection("email_locks").document(email_lock_key).set({
+                            "task_id": task_id,
+                            "acquired_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "expires_at": (datetime.now() + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+                        })
+                        
+                        # Send the email
+                        email_sent = send_email(
+                            os.getenv("EMAIL_USER"),
+                            f"Reminder: {task['name']} due soon",
+                            f"Your assignment '{task['name']}' for {task['course']} is due at {due.strftime('%m/%d/%y %I:%M %p')}"
+                        )
+                        
+                        if email_sent:
+                            # Mark as sent and clean up lock
+                            db.collection("tasks").document(task_id).update({"reminder_sent": 1})
+                            print(f"Email reminder sent for: {task['name']}")
+                        else:
+                            print(f"Failed to send email for: {task['name']}")
+                        
+                        # Clean up lock
+                        db.collection("email_locks").document(email_lock_key).delete()
+                        
+                    except Exception as e:
+                        print(f"Failed to send reminder for {task['name']}: {e}")
+                        # Clean up lock on error
+                        try:
+                            db.collection("email_locks").document(email_lock_key).delete()
+                        except:
+                            pass
             
             time.sleep(60)  # Check every minute
         except Exception as e:

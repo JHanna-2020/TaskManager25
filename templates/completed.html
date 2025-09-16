@@ -1,29 +1,22 @@
 {% extends "base.html" %}
 
-{% block title %}All Tasks - Task Manager{% endblock %}
+{% block title %}Completed Tasks - Task Manager{% endblock %}
 
 {% block content %}
 <div class="row">
     <div class="col-12">
         <div class="d-flex justify-content-between align-items-center mb-4">
-            <h2><i class="fas fa-list"></i> All Tasks <span class="badge bg-secondary">{{ task_count }}</span></h2>
+            <h2><i class="fas fa-check"></i> Completed Tasks <span class="badge bg-secondary">{{ task_count }}</span></h2>
             <div>
-                <a href="{{ url_for('add_task') }}" class="btn btn-primary">
-                    <i class="fas fa-plus"></i> Add Task
-                </a>
-                <a href="{{ url_for('test_email') }}" class="btn btn-success">
-                    <i class="fas fa-envelope"></i> Test Email
-                </a>
-                <a href="{{ url_for('delete_all_tasks') }}" class="btn btn-danger" 
-                   onclick="return confirm('Are you sure you want to delete ALL tasks? This cannot be undone!')">
-                    <i class="fas fa-trash"></i> Delete All
+                <a href="{{ url_for('index') }}" class="btn btn-outline-primary">
+                    <i class="fas fa-list"></i> All Tasks
                 </a>
             </div>
         </div>
 
         {% if tasks %}
         <div class="table-responsive">
-            <table id="tasksTable" class="table table-striped table-hover mobile-friendly">
+            <table id="completedTable" class="table table-striped table-hover mobile-friendly">
                 <thead class="table-dark">
                     <tr>
                         <th data-sort="text" role="button">Task Name <span class="sort-indicator"></span></th>
@@ -47,9 +40,7 @@
                         <td data-iso="{{ task.start_iso }}">{{ task.start_formatted }}</td>
                         <td data-iso="{{ task.due_iso }}">{{ task.due_formatted }}</td>
                         <td>
-                            <span class="badge bg-{{ 'danger' if task.status == 'Not Started' else 'warning' if task.status == 'In Progress' else 'success' if task.status == 'Completed' else 'info' }}">
-                                {{ task.status }}
-                            </span>
+                            <span class="badge bg-{{ 'success' if task.status == 'Completed' else 'info' }}">{{ task.status }}</span>
                         </td>
                         <td>
                             <div class="btn-group" role="group">
@@ -60,17 +51,6 @@
                                    onclick="return confirm('Are you sure you want to delete this task?')">
                                     <i class="fas fa-trash"></i>
                                 </a>
-                                <div class="btn-group" role="group">
-                                    <button type="button" class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown">
-                                        <i class="fas fa-cog"></i>
-                                    </button>
-                                    <ul class="dropdown-menu">
-                                        <li><a class="dropdown-item" href="{{ url_for('update_status', task_id=task.id, status='Not Started') }}">Not Started</a></li>
-                                        <li><a class="dropdown-item" href="{{ url_for('update_status', task_id=task.id, status='In Progress') }}">In Progress</a></li>
-                                        <li><a class="dropdown-item" href="{{ url_for('update_status', task_id=task.id, status='Completed') }}">Completed</a></li>
-                                        <li><a class="dropdown-item" href="{{ url_for('update_status', task_id=task.id, status='Graded') }}">Graded</a></li>
-                                    </ul>
-                                </div>
                             </div>
                         </td>
                     </tr>
@@ -80,12 +60,8 @@
         </div>
         {% else %}
         <div class="text-center py-5">
-            <i class="fas fa-tasks fa-3x text-muted mb-3"></i>
-            <h4 class="text-muted">No tasks found</h4>
-            <p class="text-muted">Get started by adding your first task!</p>
-            <a href="{{ url_for('add_task') }}" class="btn btn-primary">
-                <i class="fas fa-plus"></i> Add Your First Task
-            </a>
+            <i class="fas fa-check-circle fa-3x text-muted mb-3"></i>
+            <h4 class="text-muted">No completed tasks</h4>
         </div>
         {% endif %}
     </div>
@@ -102,7 +78,6 @@
         }
         return (td.textContent || '').toLowerCase();
     }
-
     function clearIndicators(headers) {
         headers.forEach(h => {
             const span = h.querySelector('.sort-indicator');
@@ -110,12 +85,10 @@
             h.removeAttribute('data-direction');
         });
     }
-
     function sortTable(table, colIndex, type, direction) {
         const tbody = table.tBodies[0];
         const rows = Array.from(tbody.querySelectorAll('tr'));
         const multiplier = direction === 'asc' ? 1 : -1;
-
         rows.sort((a, b) => {
             const aVal = parseCell(a.children[colIndex], type);
             const bVal = parseCell(b.children[colIndex], type);
@@ -123,20 +96,15 @@
             if (aVal > bVal) return 1 * multiplier;
             return 0;
         });
-
-        // Re-append sorted rows
         rows.forEach(r => tbody.appendChild(r));
     }
-
     document.addEventListener('DOMContentLoaded', function() {
-        const table = document.getElementById('tasksTable');
+        const table = document.getElementById('completedTable');
         if (!table) return;
         const headers = Array.from(table.tHead.querySelectorAll('th'));
-
         headers.forEach((th, idx) => {
             const type = th.getAttribute('data-sort');
-            if (!type) return; // Skip non-sortable (Actions)
-
+            if (!type) return;
             th.addEventListener('click', function() {
                 const current = th.getAttribute('data-direction') || 'none';
                 const next = current === 'asc' ? 'desc' : 'asc';
@@ -147,16 +115,15 @@
                 sortTable(table, idx, type, next);
             });
         });
-
-        // Default sort by Due Date ascending (column index 3)
+        // Default sort by Due Date descending for completed
         const dueIdx = 3;
         const dueHeader = headers[dueIdx];
         if (dueHeader && dueHeader.getAttribute('data-sort') === 'date') {
             clearIndicators(headers);
-            dueHeader.setAttribute('data-direction', 'asc');
+            dueHeader.setAttribute('data-direction', 'desc');
             const indicator = dueHeader.querySelector('.sort-indicator');
-            if (indicator) indicator.textContent = '▲';
-            sortTable(table, dueIdx, 'date', 'asc');
+            if (indicator) indicator.textContent = '▼';
+            sortTable(table, dueIdx, 'date', 'desc');
         }
     });
 })();

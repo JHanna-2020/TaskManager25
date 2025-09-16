@@ -220,11 +220,26 @@ def open_new_window():
     days = [("Mon", 1), ("Tue", 2), ("Wed", 4), ("Thu", 8), ("Fri", 16), ("Sat", 32), ("Sun", 64)]
     recur_days_frame = tk.Frame(form_frame)
     recur_days_frame.grid(column=1, row=8, sticky="w", padx=5, pady=5)
+    recurrence_checkbuttons = []
     for i, (day, bit) in enumerate(days):
         var = tk.IntVar(value=0)
         cb = tk.Checkbutton(recur_days_frame, text=day, variable=var)
         cb.grid(row=0, column=i, sticky="w")
         recurrence_vars[bit] = var
+        recurrence_checkbuttons.append(cb)
+
+    # Weekly same-day toggle: auto-set to the due date's weekday
+    weekly_same_day_var = tk.IntVar(value=0)
+    def on_weekly_toggle():
+        state = "disabled" if weekly_same_day_var.get() else "normal"
+        for cb in recurrence_checkbuttons:
+            cb.configure(state=state)
+    tk.Checkbutton(
+        form_frame,
+        text="Repeat weekly on due weekday",
+        variable=weekly_same_day_var,
+        command=on_weekly_toggle
+    ).grid(column=1, row=9, sticky="w", padx=5, pady=5)
 
     def save_assignment():
         name = name_entry.get().strip()
@@ -248,11 +263,16 @@ def open_new_window():
             messagebox.showerror("Error", "Due date cannot be before start date.")
             return
 
-        # Build recurrence_days bitmask from checkboxes
+        # Build recurrence_days bitmask
         recurrence_days = 0
-        for bit, var in recurrence_vars.items():
-            if var.get():
-                recurrence_days |= bit
+        if weekly_same_day_var.get():
+            # Map Python weekday (Mon=0..Sun=6) to bitmask
+            weekday_to_bit = {0: 1, 1: 2, 2: 4, 3: 8, 4: 16, 5: 32, 6: 64}
+            recurrence_days = weekday_to_bit[due_dt.weekday()]
+        else:
+            for bit, var in recurrence_vars.items():
+                if var.get():
+                    recurrence_days |= bit
 
         # Save to Firestore
         task_ref = db.collection("tasks").add({

@@ -19,8 +19,8 @@ if __name__ == '__main__':
         print("Email functionality may not work without EMAIL_USER and EMAIL_PASSWORD.")
     
     print("Starting Task Manager Web App...")
-    print("Open your browser and go to: http://localhost:5000")
+    print("Open your browser and go to: http://localhost:8080")
     print("Press Ctrl+C to stop the server")
     
     # Run the Flask app
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=True, host='0.0.0.0', port=8080)
