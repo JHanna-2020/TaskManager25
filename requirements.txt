@@ -1,0 +1,5 @@
+firebase-admin==7.1.0
+python-dotenv==1.0.0
+pystray==0.19.5
+Pillow==11.3.0
+tkcalendar==1.6.1

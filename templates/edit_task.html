@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+
+{% block title %}Edit Task - Task Manager{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h3><i class="fas fa-edit"></i> Edit Task</h3>
+            </div>
+            <div class="card-body">
+                <form method="POST">
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="name" class="form-label">Task Name *</label>
+                            <input type="text" class="form-control" id="name" name="name" value="{{ task.name }}" required>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="course" class="form-label">Class *</label>
+                            <select class="form-select" id="course" name="course" required>
+                                <option value="">Select Class</option>
+                                <option value="Database Design" {% if task.course == 'Database Design' %}selected{% endif %}>Database Design</option>
+                                <option value="Computer Organization & Assembly Language" {% if task.course == 'Computer Organization & Assembly Language' %}selected{% endif %}>Computer Organization & Assembly Language</option>
+                                <option value="Modern Software Design & Development" {% if task.course == 'Modern Software Design & Development' %}selected{% endif %}>Modern Software Design & Development</option>
+                                <option value="Web Application Development" {% if task.course == 'Web Application Development' %}selected{% endif %}>Web Application Development</option>
+                                <option value="CTC" {% if task.course == 'CTC' %}selected{% endif %}>CTC</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="start_date" class="form-label">Start Date *</label>
+                            <input type="date" class="form-control" id="start_date" name="start_date" value="{{ task.start_date }}" required>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="start_time" class="form-label">Start Time *</label>
+                            <input type="time" class="form-control" id="start_time" name="start_time" value="{{ task.start_time }}" required>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="due_date" class="form-label">Due Date *</label>
+                            <input type="date" class="form-control" id="due_date" name="due_date" value="{{ task.due_date }}" required>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="due_time" class="form-label">Due Time *</label>
+                            <input type="time" class="form-control" id="due_time" name="due_time" value="{{ task.due_time }}" required>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="status" class="form-label">Status *</label>
+                            <select class="form-select" id="status" name="status" required>
+                                <option value="">Select Status</option>
+                                <option value="Not Started" {% if task.status == 'Not Started' %}selected{% endif %}>Not Started</option>
+                                <option value="In Progress" {% if task.status == 'In Progress' %}selected{% endif %}>In Progress</option>
+                                <option value="Completed" {% if task.status == 'Completed' %}selected{% endif %}>Completed</option>
+                                <option value="Graded" {% if task.status == 'Graded' %}selected{% endif %}>Graded</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6 mb-3">
+                            <label for="reminder_hours" class="form-label">Reminder Hours Before Due</label>
+                            <input type="number" class="form-control" id="reminder_hours" name="reminder_hours" value="{{ task.get('reminder_hours', 24) }}" min="1" max="168">
+                        </div>
+                    </div>
+
+                    <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                        <a href="{{ url_for('index') }}" class="btn btn-secondary me-md-2">
+                            <i class="fas fa-arrow-left"></i> Cancel
+                        </a>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-save"></i> Update Task
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
