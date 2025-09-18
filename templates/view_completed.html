@@ -4,7 +4,7 @@
 
 {% block content %}
 <div class="container">
-    <h1>Completed & Graded Tasks</h1>
+    <h1>Completed & Graded Tasks <span class="badge bg-success">{{ completed_count }}</span></h1>
     
     <div class="mb-3">
         <a href="{{ url_for('index') }}" class="btn btn-secondary">← Back to All Tasks</a>

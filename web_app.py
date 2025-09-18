@@ -171,7 +171,7 @@ def index():
     except Exception as e:
         flash(f"Error loading tasks: {e}", "error")
     
-    return render_template('index.html', tasks=tasks)
+    return render_template('index.html', tasks=tasks, total_count=len(tasks), active_count=len(active_tasks), completed_count=len(completed_tasks))
 
 @app.route('/add_task', methods=['GET', 'POST'])
 def add_task():
@@ -329,7 +329,7 @@ def view_by_class(class_name):
     except Exception as e:
         flash(f"Error loading tasks: {e}", "error")
     
-    return render_template('view_by_class.html', tasks=tasks, class_name=class_name)
+    return render_template('view_by_class.html', tasks=tasks, class_name=class_name, class_count=len(tasks))
 
 @app.route('/view_completed')
 def view_completed():
@@ -347,7 +347,7 @@ def view_completed():
     except Exception as e:
         flash(f"Error loading completed tasks: {e}", "error")
     
-    return render_template('view_completed.html', tasks=tasks)
+    return render_template('view_completed.html', tasks=tasks, completed_count=len(tasks))
 
 @app.route('/view_active')
 def view_active():
@@ -365,7 +365,7 @@ def view_active():
     except Exception as e:
         flash(f"Error loading active tasks: {e}", "error")
     
-    return render_template('view_active.html', tasks=tasks)
+    return render_template('view_active.html', tasks=tasks, active_count=len(tasks))
 
 @app.route('/delete_all_tasks')
 def delete_all_tasks():
