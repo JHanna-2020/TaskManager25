@@ -25,7 +25,7 @@ def get_db():
     if not db_user or not db_password:
         raise Exception("DB_USER and dbPassword must be set in .env")
 
-    mongo_uri = f"mongodb+srv://{db_user}:{db_password}@taskmanger.3gfydvt.mongodb.net/taskmanager?retryWrites=true&w=majority&appName=taskmanger"
+    mongo_uri = f"mongodb+srv://{db_user}:{db_password}@taskmanager.3gfydvt.mongodb.net/taskmanager?retryWrites=true&w=majority&appName=taskmanger"
     db_name = os.getenv("DB_NAME", "TaskManager")
     client = MongoClient(mongo_uri)
     return client[db_name]
