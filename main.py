@@ -6,17 +6,30 @@ import threading
 import time
 import os
 import sys
+from dotenv import load_dotenv
 print("✅ TaskManager started successfully!", file=sys.stderr)
 
-import firebase_admin
-from firebase_admin import credentials, firestore
+load_dotenv()
+
+from pymongo import MongoClient
+from bson.objectid import ObjectId
 
 from email_utils import send_email
 
-# --- Firebase Setup ---
-cred = credentials.Certificate("serviceAccountKey.json")
-firebase_admin.initialize_app(cred)
-db = firestore.client()
+def get_db():
+    db_user = os.getenv("DB_USER")
+    db_password = os.getenv("dbPassword")
+    if not db_user or not db_password:
+        raise Exception("DB_USER and dbPassword must be set in .env")
+
+    mongo_uri = f"mongodb+srv://{db_user}:{db_password}@taskmanger.3gfydvt.mongodb.net/taskmanager?retryWrites=true&w=majority&appName=taskmanger"
+    db_name = os.getenv("DB_NAME", "TaskManager")
+    client = MongoClient(mongo_uri)
+    return client[db_name]
+
+db = get_db()
+tasks_col = db["tasks"]
+email_locks_col = db["email_locks"]
 
 # --- Decode recurrence days (bitmask) ---
 def decode_recurrence_days(bitmask):
@@ -60,10 +73,13 @@ def create_future_recurring_instances(name, course, start_dt, due_dt, recurrence
             new_due = next_occurrence
             
             # Check if instance already exists
-            existing_tasks = db.collection("tasks").where("name", "==", name).where("due", "==", new_due.strftime("%Y-%m-%d %H:%M:%S")).stream()
-            if not list(existing_tasks):
+            exists = tasks_col.find_one({
+                "name": name,
+                "due": new_due.strftime("%Y-%m-%d %H:%M:%S"),
+            })
+            if not exists:
                 try:
-                    db.collection("tasks").add({
+                    tasks_col.insert_one({
                         "name": name,
                         "course": course,
                         "start": new_start.strftime("%Y-%m-%d %H:%M:%S"),
@@ -72,7 +88,7 @@ def create_future_recurring_instances(name, course, start_dt, due_dt, recurrence
                         "recurrence_days": recurrence_days,
                         "reminder_hours": reminder_hours,
                         "reminder_sent": 0,
-                        "parent_task_id": parent_task_id,
+                        "parent_task_id": str(parent_task_id) if parent_task_id else None,
                         "is_recurring_instance": True
                     })
                 except Exception as e:
@@ -139,14 +155,14 @@ tree.tag_configure("Graded", background="#add8e6")
 # --- Load tasks from Firestore ---
 def load_tasks():
     tree.delete(*tree.get_children())
-    tasks = db.collection("tasks").stream()
+    tasks = tasks_col.find({}).sort("due", 1)
     for doc in tasks:
-        task = doc.to_dict()
+        task = dict(doc)
         status_tag = task.get("status", "Not Started")
         tree.insert(
             "",
             tk.END,
-            iid=doc.id,
+            iid=str(doc.get("_id")),
             values=(
                 task.get("name"),
                 task.get("course"),
@@ -220,26 +236,11 @@ def open_new_window():
     days = [("Mon", 1), ("Tue", 2), ("Wed", 4), ("Thu", 8), ("Fri", 16), ("Sat", 32), ("Sun", 64)]
     recur_days_frame = tk.Frame(form_frame)
     recur_days_frame.grid(column=1, row=8, sticky="w", padx=5, pady=5)
-    recurrence_checkbuttons = []
     for i, (day, bit) in enumerate(days):
         var = tk.IntVar(value=0)
         cb = tk.Checkbutton(recur_days_frame, text=day, variable=var)
         cb.grid(row=0, column=i, sticky="w")
         recurrence_vars[bit] = var
-        recurrence_checkbuttons.append(cb)
-
-    # Weekly same-day toggle: auto-set to the due date's weekday
-    weekly_same_day_var = tk.IntVar(value=0)
-    def on_weekly_toggle():
-        state = "disabled" if weekly_same_day_var.get() else "normal"
-        for cb in recurrence_checkbuttons:
-            cb.configure(state=state)
-    tk.Checkbutton(
-        form_frame,
-        text="Repeat weekly on due weekday",
-        variable=weekly_same_day_var,
-        command=on_weekly_toggle
-    ).grid(column=1, row=9, sticky="w", padx=5, pady=5)
 
     def save_assignment():
         name = name_entry.get().strip()
@@ -263,19 +264,14 @@ def open_new_window():
             messagebox.showerror("Error", "Due date cannot be before start date.")
             return
 
-        # Build recurrence_days bitmask
+        # Build recurrence_days bitmask from checkboxes
         recurrence_days = 0
-        if weekly_same_day_var.get():
-            # Map Python weekday (Mon=0..Sun=6) to bitmask
-            weekday_to_bit = {0: 1, 1: 2, 2: 4, 3: 8, 4: 16, 5: 32, 6: 64}
-            recurrence_days = weekday_to_bit[due_dt.weekday()]
-        else:
-            for bit, var in recurrence_vars.items():
-                if var.get():
-                    recurrence_days |= bit
+        for bit, var in recurrence_vars.items():
+            if var.get():
+                recurrence_days |= bit
 
-        # Save to Firestore
-        task_ref = db.collection("tasks").add({
+        # Save to MongoDB
+        insert_result = tasks_col.insert_one({
             "name": name,
             "course": course,
             "start": start_dt.strftime("%Y-%m-%d %H:%M:%S"),
@@ -289,7 +285,7 @@ def open_new_window():
         
         # If this is a recurring task, create future instances
         if recurrence_days > 0:
-            create_future_recurring_instances(name, course, start_dt, due_dt, recurrence_days, reminder_hours, task_ref[1].id)
+            create_future_recurring_instances(name, course, start_dt, due_dt, recurrence_days, reminder_hours, insert_result.inserted_id)
         
         load_tasks()
         new_window.destroy()
@@ -303,11 +299,11 @@ def edit_selected_task():
         messagebox.showwarning("Edit Task", "Select a task to edit.")
         return
     task_id = selected_item[0]
-    doc = db.collection("tasks").document(task_id).get()
-    if not doc.exists:
+    doc = tasks_col.find_one({"_id": ObjectId(task_id)})
+    if not doc:
         messagebox.showerror("Error", "Selected task not found.")
         return
-    task = doc.to_dict()
+    task = dict(doc)
 
     edit_window = tk.Toplevel(root)
     edit_window.title("Edit Assignment")
@@ -389,16 +385,18 @@ def edit_selected_task():
             return
 
         try:
-            db.collection("tasks").document(task_id).update({
-                "name": name,
-                "course": course,
-                "start": start_dt_new.strftime("%Y-%m-%d %H:%M:%S"),
-                "due": due_dt_new.strftime("%Y-%m-%d %H:%M:%S"),
-                "status": status,
-                "reminder_hours": reminder_hours,
-                # Optionally reset reminder_sent if due date/time changed
-                "reminder_sent": 0
-            })
+            tasks_col.update_one(
+                {"_id": ObjectId(task_id)},
+                {"$set": {
+                    "name": name,
+                    "course": course,
+                    "start": start_dt_new.strftime("%Y-%m-%d %H:%M:%S"),
+                    "due": due_dt_new.strftime("%Y-%m-%d %H:%M:%S"),
+                    "status": status,
+                    "reminder_hours": reminder_hours,
+                    "reminder_sent": 0
+                }}
+            )
             load_tasks()
             edit_window.destroy()
         except Exception as e:
@@ -450,26 +448,25 @@ def open_class_view():
     
     def load_filtered_tasks():
         filtered_tree.delete(*filtered_tree.get_children())
-        tasks = db.collection("tasks").stream()
         selected_class_name = selected_class.get()
+        tasks = tasks_col.find({"course": selected_class_name}).sort("due", 1)
         
         for doc in tasks:
-            task = doc.to_dict()
-            if task.get("course") == selected_class_name:
-                status_tag = task.get("status", "Not Started")
-                filtered_tree.insert(
-                    "",
-                    tk.END,
-                    iid=doc.id,
-                    values=(
-                        task.get("name"),
-                        task.get("course"),
-                        datetime.strptime(task.get("start"), "%Y-%m-%d %H:%M:%S").strftime("%m/%d/%y %I:%M %p"),
-                        datetime.strptime(task.get("due"), "%Y-%m-%d %H:%M:%S").strftime("%m/%d/%y %I:%M %p"),
-                        status_tag
-                    ),
-                    tags=(status_tag,)
-                )
+            task = dict(doc)
+            status_tag = task.get("status", "Not Started")
+            filtered_tree.insert(
+                "",
+                tk.END,
+                iid=str(doc.get("_id")),
+                values=(
+                    task.get("name"),
+                    task.get("course"),
+                    datetime.strptime(task.get("start"), "%Y-%m-%d %H:%M:%S").strftime("%m/%d/%y %I:%M %p"),
+                    datetime.strptime(task.get("due"), "%Y-%m-%d %H:%M:%S").strftime("%m/%d/%y %I:%M %p"),
+                    status_tag
+                ),
+                tags=(status_tag,)
+            )
     
     def refresh_tasks():
         load_filtered_tasks()
@@ -503,7 +500,7 @@ def update_task_status():
         return
     task_id = selected_item[0]
     new_status = status_combobox.get()
-    db.collection("tasks").document(task_id).update({"status": new_status})
+    tasks_col.update_one({"_id": ObjectId(task_id)}, {"$set": {"status": new_status}})
     load_tasks()
 
 tk.Button(status_frame, text="Update Status", command=update_task_status).pack(side=tk.LEFT, padx=5)
@@ -515,7 +512,7 @@ def delete_selected_task():
         messagebox.showwarning("Delete Task", "Select a task.")
         return
     task_id = selected_item[0]
-    db.collection("tasks").document(task_id).delete()
+    tasks_col.delete_one({"_id": ObjectId(task_id)})
     load_tasks()
 
 tk.Button(root, text="Delete Selected Task", command=delete_selected_task).pack(pady=5)
@@ -534,21 +531,15 @@ def delete_all_tasks():
     
     if result:
         try:
-            # Get all tasks from Firestore
-            tasks = db.collection("tasks").stream()
+            tasks = tasks_col.find({})
             deleted_count = 0
             
-            # Delete each task
             for doc in tasks:
-                db.collection("tasks").document(doc.id).delete()
+                tasks_col.delete_one({"_id": doc.get("_id")})
                 deleted_count += 1
             
-            # Refresh the task list
             load_tasks()
-            
-            # Show confirmation message
             messagebox.showinfo("Delete All Tasks", f"Successfully deleted {deleted_count} tasks.")
-            
         except Exception as e:
             messagebox.showerror("Error", f"Failed to delete all tasks: {e}")
 
@@ -587,10 +578,10 @@ tk.Button(root, text="Test Email Setup", command=test_email_setup).pack(pady=5)
 def reminder_loop():
     while True:
         now = datetime.now()
-        tasks = db.collection("tasks").stream()
+        tasks = tasks_col.find({})
         for doc in tasks:
-            task = doc.to_dict()
-            task_id = doc.id
+            task = dict(doc)
+            task_id = str(doc.get("_id"))
             due = datetime.strptime(task["due"], "%Y-%m-%d %H:%M:%S")
             start = datetime.strptime(task["start"], "%Y-%m-%d %H:%M:%S")
             reminder_hours = task.get("reminder_hours", 24)
@@ -605,13 +596,14 @@ def reminder_loop():
                     email_lock_key = f"email_lock_{task_id}_{due.strftime('%Y-%m-%d-%H')}"
                     
                     # Check if another device is already sending this reminder
-                    lock_doc = db.collection("email_locks").document(email_lock_key).get()
-                    if lock_doc.exists:
+                    lock_doc = email_locks_col.find_one({"_id": email_lock_key})
+                    if lock_doc:
                         # Another device is handling this reminder
                         continue
                     
                     # Acquire the lock (expires in 1 hour)
-                    db.collection("email_locks").document(email_lock_key).set({
+                    email_locks_col.insert_one({
+                        "_id": email_lock_key,
                         "task_id": task_id,
                         "acquired_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         "expires_at": (datetime.now() + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
@@ -625,14 +617,14 @@ def reminder_loop():
                     )
                     
                     # Mark as sent and clean up lock
-                    db.collection("tasks").document(task_id).update({"reminder_sent": 1})
-                    db.collection("email_locks").document(email_lock_key).delete()
+                    tasks_col.update_one({"_id": ObjectId(task_id)}, {"$set": {"reminder_sent": 1}})
+                    email_locks_col.delete_one({"_id": email_lock_key})
                     
                 except Exception as e:
                     print(f"Failed to send reminder: {e}")
                     # Clean up lock on error
                     try:
-                        db.collection("email_locks").document(email_lock_key).delete()
+                        email_locks_col.delete_one({"_id": email_lock_key})
                     except:
                         pass
 
@@ -649,20 +641,20 @@ def reminder_loop():
                         new_due = next_occurrence
                         
                         # Check if next instance already exists to avoid duplicates
-                        existing_tasks = db.collection("tasks").where("name", "==", task["name"]).where("due", "==", new_due.strftime("%Y-%m-%d %H:%M:%S")).stream()
-                        if not list(existing_tasks):
+                        exists = tasks_col.find_one({"name": task["name"], "due": new_due.strftime("%Y-%m-%d %H:%M:%S")})
+                        if not exists:
                             # Create new instance of the recurring task
                             try:
-                                db.collection("tasks").add({
+                                tasks_col.insert_one({
                                     "name": task["name"],
                                     "course": task["course"],
                                     "start": new_start.strftime("%Y-%m-%d %H:%M:%S"),
                                     "due": new_due.strftime("%Y-%m-%d %H:%M:%S"),
-                                    "status": "Not Started",  # New instances start as "Not Started"
+                                    "status": "Not Started",
                                     "recurrence_days": recurrence_days,
                                     "reminder_hours": task.get("reminder_hours", 24),
                                     "reminder_sent": 0,
-                                    "parent_task_id": task_id,  # Track the original task
+                                    "parent_task_id": task_id,
                                     "is_recurring_instance": True
                                 })
                                 print(f"Created new recurring task instance: {task['name']} for {new_due.strftime('%m/%d/%y %I:%M %p')}")

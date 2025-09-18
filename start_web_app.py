@@ -9,10 +9,7 @@ from web_app import app
 
 if __name__ == '__main__':
     # Check if required files exist
-    if not os.path.exists('serviceAccountKey.json'):
-        print("Error: serviceAccountKey.json not found!")
-        print("Please make sure your Firebase credentials file is in the same directory.")
-        sys.exit(1)
+    # Firebase credential no longer required with MongoDB backend
     
     if not os.path.exists('.env'):
         print("Warning: .env file not found!")

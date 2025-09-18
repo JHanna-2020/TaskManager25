@@ -70,12 +70,6 @@
 
                     <div class="mb-3">
                         <label class="form-label">Recurrence Days (Optional)</label>
-                        <div class="form-check mb-2">
-                            <input class="form-check-input" type="checkbox" id="weekly_same_day" name="weekly_same_day">
-                            <label class="form-check-label" for="weekly_same_day">
-                                Repeat weekly on due weekday
-                            </label>
-                        </div>
                         <div class="row">
                             <div class="col-6 col-md-3">
                                 <div class="form-check">
@@ -147,19 +141,6 @@
         
         document.getElementById('start_date').value = today.toISOString().split('T')[0];
         document.getElementById('due_date').value = tomorrow.toISOString().split('T')[0];
-
-        // Weekly same-day toggle disables manual day selection when enabled
-        const weeklyToggle = document.getElementById('weekly_same_day');
-        const dayIds = ['recurrence_mon','recurrence_tue','recurrence_wed','recurrence_thu','recurrence_fri','recurrence_sat','recurrence_sun'];
-        const dayInputs = dayIds.map(id => document.getElementById(id));
-
-        function setDaysDisabled(disabled) {
-            dayInputs.forEach(inp => { if (inp) inp.disabled = disabled; });
-        }
-
-        weeklyToggle.addEventListener('change', function() {
-            setDaysDisabled(this.checked);
-        });
     });
 </script>
 {% endblock %}
