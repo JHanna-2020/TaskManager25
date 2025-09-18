@@ -27,7 +27,7 @@ def get_db():
 
     mongo_uri = f"mongodb+srv://{db_user}:{db_password}@taskmanager.3gfydvt.mongodb.net/taskmanager?retryWrites=true&w=majority&appName=taskmanger"
     db_name = os.getenv("DB_NAME", "TaskManager")
-    client = MongoClient(mongo_uri)
+    client = client = MongoClient(mongo_uri, tls=True, tlsAllowInvalidCertificates=False)
     return client[db_name]
 
 db = get_db()
@@ -107,20 +107,67 @@ def create_future_recurring_instances(name, course, start_dt, due_dt, recurrence
         else:
             break
 
+def create_due_weekday_instance(name, course, start_dt, due_dt, reminder_hours, parent_task_id):
+    """Create next week's instance for due weekday recurrence"""
+    duration = due_dt - start_dt
+    # Add 7 days to get next week's same weekday
+    next_due = due_dt + timedelta(days=7)
+    next_start = next_due - duration
+    
+    # Check if instance already exists
+    exists = tasks_col.find_one({
+        "name": name,
+        "due": next_due.strftime("%Y-%m-%d %H:%M:%S"),
+    })
+    if not exists:
+        try:
+            tasks_col.insert_one({
+                "name": name,
+                "course": course,
+                "start": next_start.strftime("%Y-%m-%d %H:%M:%S"),
+                "due": next_due.strftime("%Y-%m-%d %H:%M:%S"),
+                "status": "Not Started",
+                "recurrence_days": -1,  # Special flag for due weekday recurrence
+                "reminder_hours": reminder_hours,
+                "reminder_sent": 0,
+                "parent_task_id": str(parent_task_id) if parent_task_id else None,
+                "is_recurring_instance": True
+            })
+        except Exception as e:
+            print(f"Failed to create due weekday instance: {e}")
+
 # --- Routes ---
 @app.route('/')
 def index():
     """Main page showing all tasks"""
     tasks = []
     try:
-        cursor = tasks_col.find({}).sort("due", 1)
-        for doc in cursor:
+        # Get all tasks and sort them: active tasks first (by due date), then completed/graded (by due date)
+        all_tasks = list(tasks_col.find({}))
+        
+        # Separate active and completed tasks
+        active_tasks = []
+        completed_tasks = []
+        
+        for doc in all_tasks:
             task = dict(doc)
             task['id'] = str(doc.get('_id'))
             # Format dates for display
             task['start_formatted'] = datetime.strptime(task.get("start"), "%Y-%m-%d %H:%M:%S").strftime("%m/%d/%y %I:%M %p")
             task['due_formatted'] = datetime.strptime(task.get("due"), "%Y-%m-%d %H:%M:%S").strftime("%m/%d/%y %I:%M %p")
-            tasks.append(task)
+            
+            if task.get("status") in ["Completed", "Graded"]:
+                completed_tasks.append(task)
+            else:
+                active_tasks.append(task)
+        
+        # Sort each group by due date
+        active_tasks.sort(key=lambda x: x.get("due", ""))
+        completed_tasks.sort(key=lambda x: x.get("due", ""))
+        
+        # Combine: active tasks first, then completed tasks
+        tasks = active_tasks + completed_tasks
+        
     except Exception as e:
         flash(f"Error loading tasks: {e}", "error")
     
@@ -145,12 +192,19 @@ def add_task():
             start_dt = datetime.strptime(f"{start_date} {start_time}", "%Y-%m-%d %H:%M")
             due_dt = datetime.strptime(f"{due_date} {due_time}", "%Y-%m-%d %H:%M")
             
-            # Handle recurrence days
+            # Handle recurrence options
+            recurrence_type = request.form.get('recurrence_type', 'none')
             recurrence_days = 0
-            for day in ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']:
-                if request.form.get(f'recurrence_{day.lower()}'):
-                    day_map = {'mon': 1, 'tue': 2, 'wed': 4, 'thu': 8, 'fri': 16, 'sat': 32, 'sun': 64}
-                    recurrence_days |= day_map[day.lower()]
+            
+            if recurrence_type == 'weekly':
+                # Use the current bitmask system for specific days
+                for day in ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']:
+                    if request.form.get(f'recurrence_{day.lower()}'):
+                        day_map = {'mon': 1, 'tue': 2, 'wed': 4, 'thu': 8, 'fri': 16, 'sat': 32, 'sun': 64}
+                        recurrence_days |= day_map[day.lower()]
+            elif recurrence_type == 'due_weekday':
+                # Set a special flag for due weekday recurrence
+                recurrence_days = -1  # Special value to indicate due weekday recurrence
             
             # Create task
             insert_result = tasks_col.insert_one({
@@ -168,6 +222,9 @@ def add_task():
             # If recurring task, create future instances
             if recurrence_days > 0:
                 create_future_recurring_instances(name, course, start_dt, due_dt, recurrence_days, reminder_hours, insert_result.inserted_id)
+            elif recurrence_days == -1:
+                # For due weekday recurrence, create next week's instance
+                create_due_weekday_instance(name, course, start_dt, due_dt, reminder_hours, insert_result.inserted_id)
             
             flash('Task added successfully!', 'success')
             return redirect(url_for('index'))
@@ -273,6 +330,42 @@ def view_by_class(class_name):
         flash(f"Error loading tasks: {e}", "error")
     
     return render_template('view_by_class.html', tasks=tasks, class_name=class_name)
+
+@app.route('/view_completed')
+def view_completed():
+    """View completed and graded tasks"""
+    tasks = []
+    try:
+        cursor = tasks_col.find({"status": {"$in": ["Completed", "Graded"]}}).sort("due", 1)
+        for doc in cursor:
+            task = dict(doc)
+            task['id'] = str(doc.get('_id'))
+            # Format dates for display
+            task['start_formatted'] = datetime.strptime(task.get("start"), "%Y-%m-%d %H:%M:%S").strftime("%m/%d/%y %I:%M %p")
+            task['due_formatted'] = datetime.strptime(task.get("due"), "%Y-%m-%d %H:%M:%S").strftime("%m/%d/%y %I:%M %p")
+            tasks.append(task)
+    except Exception as e:
+        flash(f"Error loading completed tasks: {e}", "error")
+    
+    return render_template('view_completed.html', tasks=tasks)
+
+@app.route('/view_active')
+def view_active():
+    """View not started and in progress tasks"""
+    tasks = []
+    try:
+        cursor = tasks_col.find({"status": {"$in": ["Not Started", "In Progress"]}}).sort("due", 1)
+        for doc in cursor:
+            task = dict(doc)
+            task['id'] = str(doc.get('_id'))
+            # Format dates for display
+            task['start_formatted'] = datetime.strptime(task.get("start"), "%Y-%m-%d %H:%M:%S").strftime("%m/%d/%y %I:%M %p")
+            task['due_formatted'] = datetime.strptime(task.get("due"), "%Y-%m-%d %H:%M:%S").strftime("%m/%d/%y %I:%M %p")
+            tasks.append(task)
+    except Exception as e:
+        flash(f"Error loading active tasks: {e}", "error")
+    
+    return render_template('view_active.html', tasks=tasks)
 
 @app.route('/delete_all_tasks')
 def delete_all_tasks():

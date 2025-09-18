@@ -69,48 +69,72 @@
                     </div>
 
                     <div class="mb-3">
-                        <label class="form-label">Recurrence Days (Optional)</label>
-                        <div class="row">
-                            <div class="col-6 col-md-3">
-                                <div class="form-check">
-                                    <input class="form-check-input" type="checkbox" id="recurrence_mon" name="recurrence_mon">
-                                    <label class="form-check-label" for="recurrence_mon">Monday</label>
-                                </div>
+                        <label class="form-label">Recurrence (Optional)</label>
+                        <div class="mb-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="recurrence_type" id="recurrence_none" value="none" checked>
+                                <label class="form-check-label" for="recurrence_none">
+                                    No Recurrence
+                                </label>
                             </div>
-                            <div class="col-6 col-md-3">
-                                <div class="form-check">
-                                    <input class="form-check-input" type="checkbox" id="recurrence_tue" name="recurrence_tue">
-                                    <label class="form-check-label" for="recurrence_tue">Tuesday</label>
-                                </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="recurrence_type" id="recurrence_due_weekday" value="due_weekday">
+                                <label class="form-check-label" for="recurrence_due_weekday">
+                                    <strong>Recurring on Due Weekday</strong> - Creates next week's instance on the same day of the week
+                                </label>
                             </div>
-                            <div class="col-6 col-md-3">
-                                <div class="form-check">
-                                    <input class="form-check-input" type="checkbox" id="recurrence_wed" name="recurrence_wed">
-                                    <label class="form-check-label" for="recurrence_wed">Wednesday</label>
-                                </div>
+                            <div class="form-check">
+                                <input class="form-check-input" type="radio" name="recurrence_type" id="recurrence_weekly" value="weekly">
+                                <label class="form-check-label" for="recurrence_weekly">
+                                    Custom Weekly Recurrence - Select specific days
+                                </label>
                             </div>
-                            <div class="col-6 col-md-3">
-                                <div class="form-check">
-                                    <input class="form-check-input" type="checkbox" id="recurrence_thu" name="recurrence_thu">
-                                    <label class="form-check-label" for="recurrence_thu">Thursday</label>
+                        </div>
+                        
+                        <div id="weekly_days" style="display: none;">
+                            <label class="form-label">Select Days:</label>
+                            <div class="row">
+                                <div class="col-6 col-md-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="recurrence_mon" name="recurrence_mon">
+                                        <label class="form-check-label" for="recurrence_mon">Monday</label>
+                                    </div>
                                 </div>
-                            </div>
-                            <div class="col-6 col-md-3">
-                                <div class="form-check">
-                                    <input class="form-check-input" type="checkbox" id="recurrence_fri" name="recurrence_fri">
-                                    <label class="form-check-label" for="recurrence_fri">Friday</label>
+                                <div class="col-6 col-md-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="recurrence_tue" name="recurrence_tue">
+                                        <label class="form-check-label" for="recurrence_tue">Tuesday</label>
+                                    </div>
                                 </div>
-                            </div>
-                            <div class="col-6 col-md-3">
-                                <div class="form-check">
-                                    <input class="form-check-input" type="checkbox" id="recurrence_sat" name="recurrence_sat">
-                                    <label class="form-check-label" for="recurrence_sat">Saturday</label>
+                                <div class="col-6 col-md-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="recurrence_wed" name="recurrence_wed">
+                                        <label class="form-check-label" for="recurrence_wed">Wednesday</label>
+                                    </div>
                                 </div>
-                            </div>
-                            <div class="col-6 col-md-3">
-                                <div class="form-check">
-                                    <input class="form-check-input" type="checkbox" id="recurrence_sun" name="recurrence_sun">
-                                    <label class="form-check-label" for="recurrence_sun">Sunday</label>
+                                <div class="col-6 col-md-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="recurrence_thu" name="recurrence_thu">
+                                        <label class="form-check-label" for="recurrence_thu">Thursday</label>
+                                    </div>
+                                </div>
+                                <div class="col-6 col-md-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="recurrence_fri" name="recurrence_fri">
+                                        <label class="form-check-label" for="recurrence_fri">Friday</label>
+                                    </div>
+                                </div>
+                                <div class="col-6 col-md-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="recurrence_sat" name="recurrence_sat">
+                                        <label class="form-check-label" for="recurrence_sat">Saturday</label>
+                                    </div>
+                                </div>
+                                <div class="col-6 col-md-3">
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="recurrence_sun" name="recurrence_sun">
+                                        <label class="form-check-label" for="recurrence_sun">Sunday</label>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -141,6 +165,20 @@
         
         document.getElementById('start_date').value = today.toISOString().split('T')[0];
         document.getElementById('due_date').value = tomorrow.toISOString().split('T')[0];
+        
+        // Handle recurrence type changes
+        const recurrenceRadios = document.querySelectorAll('input[name="recurrence_type"]');
+        const weeklyDays = document.getElementById('weekly_days');
+        
+        recurrenceRadios.forEach(radio => {
+            radio.addEventListener('change', function() {
+                if (this.value === 'weekly') {
+                    weeklyDays.style.display = 'block';
+                } else {
+                    weeklyDays.style.display = 'none';
+                }
+            });
+        });
     });
 </script>
 {% endblock %}
