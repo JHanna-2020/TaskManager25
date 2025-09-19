@@ -74,6 +74,75 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <script>
+        // Table sorting functionality
+        document.addEventListener('DOMContentLoaded', function() {
+            const sortableHeaders = document.querySelectorAll('.sortable');
+            let currentSort = { column: null, direction: 'asc' };
+            
+            sortableHeaders.forEach(header => {
+                header.style.cursor = 'pointer';
+                header.addEventListener('click', function() {
+                    const sortColumn = this.dataset.sort;
+                    const tbody = this.closest('table').querySelector('tbody');
+                    const rows = Array.from(tbody.querySelectorAll('tr'));
+                    
+                    // Determine sort direction
+                    if (currentSort.column === sortColumn) {
+                        currentSort.direction = currentSort.direction === 'asc' ? 'desc' : 'asc';
+                    } else {
+                        currentSort.direction = 'asc';
+                    }
+                    currentSort.column = sortColumn;
+                    
+                    // Update sort icons
+                    sortableHeaders.forEach(h => {
+                        const icon = h.querySelector('i');
+                        icon.className = 'fas fa-sort';
+                    });
+                    const currentIcon = this.querySelector('i');
+                    currentIcon.className = currentSort.direction === 'asc' ? 'fas fa-sort-up' : 'fas fa-sort-down';
+                    
+                    // Sort rows
+                    rows.sort((a, b) => {
+                        let aVal, bVal;
+                        
+                        switch(sortColumn) {
+                            case 'name':
+                                aVal = a.cells[0].textContent.trim();
+                                bVal = b.cells[0].textContent.trim();
+                                break;
+                            case 'course':
+                                aVal = a.cells[1].textContent.trim();
+                                bVal = b.cells[1].textContent.trim();
+                                break;
+                            case 'start':
+                                aVal = new Date(a.cells[2].textContent.trim());
+                                bVal = new Date(b.cells[2].textContent.trim());
+                                break;
+                            case 'due':
+                                aVal = new Date(a.cells[3].textContent.trim());
+                                bVal = new Date(b.cells[3].textContent.trim());
+                                break;
+                            case 'status':
+                                aVal = a.cells[4].textContent.trim();
+                                bVal = b.cells[4].textContent.trim();
+                                break;
+                        }
+                        
+                        if (aVal < bVal) return currentSort.direction === 'asc' ? -1 : 1;
+                        if (aVal > bVal) return currentSort.direction === 'asc' ? 1 : -1;
+                        return 0;
+                    });
+                    
+                    // Re-append sorted rows
+                    rows.forEach(row => tbody.appendChild(row));
+                });
+            });
+        });
+    </script>
+    
     {% block scripts %}{% endblock %}
 </body>
 </html>

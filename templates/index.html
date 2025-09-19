@@ -40,11 +40,11 @@
             <table class="table table-striped table-hover mobile-friendly">
                 <thead class="table-dark">
                     <tr>
-                        <th>Task Name</th>
-                        <th>Class</th>
-                        <th>Start Date</th>
-                        <th>Due Date</th>
-                        <th>Status</th>
+                        <th class="sortable" data-sort="name">Task Name <i class="fas fa-sort"></i></th>
+                        <th class="sortable" data-sort="course">Class <i class="fas fa-sort"></i></th>
+                        <th class="sortable" data-sort="start">Start Date <i class="fas fa-sort"></i></th>
+                        <th class="sortable" data-sort="due">Due Date <i class="fas fa-sort"></i></th>
+                        <th class="sortable" data-sort="status">Status <i class="fas fa-sort"></i></th>
                         <th>Actions</th>
                     </tr>
                 </thead>
@@ -104,4 +104,5 @@
         {% endif %}
     </div>
 </div>
+
 {% endblock %}
