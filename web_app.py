@@ -9,8 +9,7 @@ from pymongo import MongoClient
 from bson.objectid import ObjectId
 import os
 from dotenv import load_dotenv
-import threading
-import time
+import urllib.parse
 
 # Load environment variables
 load_dotenv()
@@ -20,26 +19,40 @@ app = Flask(__name__)
 app.secret_key = os.getenv('SECRET_KEY', 'your-secret-key-here')
 
 def get_db():
+    """Initialize MongoDB connection with proper error handling"""
     db_user = os.getenv("DB_USER")
-    db_password = os.getenv("dbPassword")
-    if not db_user or not db_password:
-        raise Exception("DB_USER and dbPassword must be set in .env")
-
-    mongo_uri = f"mongodb+srv://{db_user}:{db_password}@taskmanager.3gfydvt.mongodb.net/taskmanager?retryWrites=true&w=majority&appName=taskmanger"
+    db_password = os.getenv("DB_PASSWORD")  # Fixed: was "dbPassword"
     db_name = os.getenv("DB_NAME", "TaskManager")
-    client = client = MongoClient(mongo_uri, tls=True, tlsAllowInvalidCertificates=False)
-    return client[db_name]
+    print(db_user, db_password, db_name)
+    
+    if not db_user or not db_password:
+        raise Exception("DB_USER and DB_PASSWORD must be set in .env")
 
-db = get_db()
-tasks_col = db["tasks"]
-email_locks_col = db["email_locks"]
+    # URL encode credentials to handle special characters
+    encoded_user = urllib.parse.quote_plus(db_user)
+    encoded_password = urllib.parse.quote_plus(db_password)
+    
+    # Fixed URI with proper encoding
+    mongo_uri = f"mongodb+srv://{db_user}:{db_password}@taskmanger.3gfydvt.mongodb.net/?retryWrites=true&w=majority&appName=taskmanger"
 
-db = get_db()
-tasks_col = db['tasks']
-email_locks_col = db['email_locks']
+    try:
+        client = MongoClient(mongo_uri, tls=True, tlsAllowInvalidCertificates=False)
+        client.admin.command("ping")  # Test connection
+        print("[DEBUG] MongoDB connection successful.")
+        return client[db_name]
+    except Exception as e:
+        print(f"[ERROR] MongoDB connection failed: {e}")
+        raise Exception(f"Failed to connect to MongoDB: {e}")
 
-# Global variable to track if reminder loop is running
-reminder_thread_running = False
+# Initialize database connection
+try:
+    db = get_db()
+    tasks_col = db["tasks"]
+    print("[DEBUG] Database initialized successfully")
+except Exception as e:
+    print(f"[ERROR] Failed to initialize database: {e}")
+    db = None
+    tasks_col = None
 
 # --- Helper Functions ---
 def decode_recurrence_days(bitmask):
@@ -68,8 +81,11 @@ def calculate_next_occurrence(current_due, recurrence_days):
     # If no occurrence found in the next 7 days, return the next week
     return next_date + timedelta(days=7)
 
-def create_future_recurring_instances(name, course, start_dt, due_dt, recurrence_days, reminder_hours, parent_task_id):
+def create_future_recurring_instances(name, course, start_dt, due_dt, recurrence_days, parent_task_id):
     """Create future instances of a recurring task (up to 12 weeks ahead)"""
+    if tasks_col is None:
+        flash("Database connection error", "error")
+        return redirect(url_for('index'))
     current_due = due_dt
     duration = due_dt - start_dt
     
@@ -94,8 +110,6 @@ def create_future_recurring_instances(name, course, start_dt, due_dt, recurrence
                         "due": new_due.strftime("%Y-%m-%d %H:%M:%S"),
                         "status": "Not Started",
                         "recurrence_days": recurrence_days,
-                        "reminder_hours": reminder_hours,
-                        "reminder_sent": 0,
                         "parent_task_id": str(parent_task_id) if parent_task_id else None,
                         "is_recurring_instance": True
                     })
@@ -107,8 +121,12 @@ def create_future_recurring_instances(name, course, start_dt, due_dt, recurrence
         else:
             break
 
-def create_due_weekday_instance(name, course, start_dt, due_dt, reminder_hours, parent_task_id):
+def create_due_weekday_instance(name, course, start_dt, due_dt, parent_task_id):
     """Create next week's instance for due weekday recurrence"""
+    if tasks_col is None:
+        flash("Database connection error", "error")
+        return redirect(url_for('index'))
+        
     duration = due_dt - start_dt
     # Add 7 days to get next week's same weekday
     next_due = due_dt + timedelta(days=7)
@@ -128,8 +146,6 @@ def create_due_weekday_instance(name, course, start_dt, due_dt, reminder_hours, 
                 "due": next_due.strftime("%Y-%m-%d %H:%M:%S"),
                 "status": "Not Started",
                 "recurrence_days": -1,  # Special flag for due weekday recurrence
-                "reminder_hours": reminder_hours,
-                "reminder_sent": 0,
                 "parent_task_id": str(parent_task_id) if parent_task_id else None,
                 "is_recurring_instance": True
             })
@@ -140,21 +156,31 @@ def create_due_weekday_instance(name, course, start_dt, due_dt, reminder_hours, 
 @app.route('/')
 def index():
     """Main page showing all tasks"""
+    if tasks_col is None:
+        flash("Database connection error", "error")
+        return render_template('index.html', tasks=[], total_count=0, active_count=0, completed_count=0)
+        
     tasks = []
+    active_tasks = []
+    completed_tasks = []
+    
     try:
         # Get all tasks and sort them: active tasks first (by due date), then completed/graded (by due date)
         all_tasks = list(tasks_col.find({}))
         
-        # Separate active and completed tasks
-        active_tasks = []
-        completed_tasks = []
-        
         for doc in all_tasks:
             task = dict(doc)
             task['id'] = str(doc.get('_id'))
-            # Format dates for display
-            task['start_formatted'] = datetime.strptime(task.get("start"), "%Y-%m-%d %H:%M:%S").strftime("%m/%d/%y %I:%M %p")
-            task['due_formatted'] = datetime.strptime(task.get("due"), "%Y-%m-%d %H:%M:%S").strftime("%m/%d/%y %I:%M %p")
+            
+            # Safely format dates for display
+            try:
+                start_dt = datetime.strptime(task.get("start", ""), "%Y-%m-%d %H:%M:%S")
+                due_dt = datetime.strptime(task.get("due", ""), "%Y-%m-%d %H:%M:%S")
+                task['start_formatted'] = start_dt.strftime("%m/%d/%y %I:%M %p")
+                task['due_formatted'] = due_dt.strftime("%m/%d/%y %I:%M %p")
+            except (ValueError, TypeError):
+                task['start_formatted'] = "Invalid Date"
+                task['due_formatted'] = "Invalid Date"
             
             if task.get("status") in ["Completed", "Graded"]:
                 completed_tasks.append(task)
@@ -170,12 +196,17 @@ def index():
         
     except Exception as e:
         flash(f"Error loading tasks: {e}", "error")
+        print(f"[ERROR] Exception in index(): {e}")
     
     return render_template('index.html', tasks=tasks, total_count=len(tasks), active_count=len(active_tasks), completed_count=len(completed_tasks))
 
 @app.route('/add_task', methods=['GET', 'POST'])
 def add_task():
     """Add a new task"""
+    if tasks_col is None:
+        flash("Database connection error", "error")
+        return render_template('add_task.html')
+        
     if request.method == 'POST':
         try:
             # Get form data
@@ -186,7 +217,11 @@ def add_task():
             due_date = request.form.get('due_date')
             due_time = request.form.get('due_time')
             status = request.form.get('status')
-            reminder_hours = int(request.form.get('reminder_hours', 24))
+            
+            # Validate required fields
+            if not all([name, course, start_date, start_time, due_date, due_time]):
+                flash('All fields are required!', 'error')
+                return render_template('add_task.html')
             
             # Parse dates
             start_dt = datetime.strptime(f"{start_date} {start_time}", "%Y-%m-%d %H:%M")
@@ -198,10 +233,10 @@ def add_task():
             
             if recurrence_type == 'weekly':
                 # Use the current bitmask system for specific days
-                for day in ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']:
-                    if request.form.get(f'recurrence_{day.lower()}'):
-                        day_map = {'mon': 1, 'tue': 2, 'wed': 4, 'thu': 8, 'fri': 16, 'sat': 32, 'sun': 64}
-                        recurrence_days |= day_map[day.lower()]
+                day_map = {'mon': 1, 'tue': 2, 'wed': 4, 'thu': 8, 'fri': 16, 'sat': 32, 'sun': 64}
+                for day in day_map.keys():
+                    if request.form.get(f'recurrence_{day}'):
+                        recurrence_days |= day_map[day]
             elif recurrence_type == 'due_weekday':
                 # Set a special flag for due weekday recurrence
                 recurrence_days = -1  # Special value to indicate due weekday recurrence
@@ -214,21 +249,21 @@ def add_task():
                 "due": due_dt.strftime("%Y-%m-%d %H:%M:%S"),
                 "status": status,
                 "recurrence_days": recurrence_days,
-                "reminder_hours": reminder_hours,
-                "reminder_sent": 0,
                 "is_recurring_instance": False
             })
             
             # If recurring task, create future instances
             if recurrence_days > 0:
-                create_future_recurring_instances(name, course, start_dt, due_dt, recurrence_days, reminder_hours, insert_result.inserted_id)
+                create_future_recurring_instances(name, course, start_dt, due_dt, recurrence_days, insert_result.inserted_id)
             elif recurrence_days == -1:
                 # For due weekday recurrence, create next week's instance
-                create_due_weekday_instance(name, course, start_dt, due_dt, reminder_hours, insert_result.inserted_id)
+                create_due_weekday_instance(name, course, start_dt, due_dt, insert_result.inserted_id)
             
             flash('Task added successfully!', 'success')
             return redirect(url_for('index'))
             
+        except ValueError as e:
+            flash(f'Invalid date/time format: {e}', 'error')
         except Exception as e:
             flash(f'Error adding task: {e}', 'error')
     
@@ -237,6 +272,10 @@ def add_task():
 @app.route('/edit_task/<task_id>', methods=['GET', 'POST'])
 def edit_task(task_id):
     """Edit an existing task"""
+    if tasks_col is None:
+        flash("Database connection error", "error")
+        return redirect(url_for('index'))
+        
     if request.method == 'POST':
         try:
             # Get form data
@@ -247,29 +286,36 @@ def edit_task(task_id):
             due_date = request.form.get('due_date')
             due_time = request.form.get('due_time')
             status = request.form.get('status')
-            reminder_hours = int(request.form.get('reminder_hours', 24))
+            
+            # Validate required fields
+            if not all([name, course, start_date, start_time, due_date, due_time]):
+                flash('All fields are required!', 'error')
+                return redirect(url_for('edit_task', task_id=task_id))
             
             # Parse dates
             start_dt = datetime.strptime(f"{start_date} {start_time}", "%Y-%m-%d %H:%M")
             due_dt = datetime.strptime(f"{due_date} {due_time}", "%Y-%m-%d %H:%M")
             
             # Update task
-            tasks_col.update_one(
+            result = tasks_col.update_one(
                 {"_id": ObjectId(task_id)},
                 {"$set": {
                     "name": name,
                     "course": course,
                     "start": start_dt.strftime("%Y-%m-%d %H:%M:%S"),
                     "due": due_dt.strftime("%Y-%m-%d %H:%M:%S"),
-                    "status": status,
-                    "reminder_hours": reminder_hours,
-                    "reminder_sent": 0
+                    "status": status
                 }}
             )
             
-            flash('Task updated successfully!', 'success')
+            if result.modified_count > 0:
+                flash('Task updated successfully!', 'success')
+            else:
+                flash('No changes made to task.', 'info')
             return redirect(url_for('index'))
             
+        except ValueError as e:
+            flash(f'Invalid date/time format: {e}', 'error')
         except Exception as e:
             flash(f'Error updating task: {e}', 'error')
     
@@ -297,9 +343,16 @@ def edit_task(task_id):
 @app.route('/delete_task/<task_id>')
 def delete_task(task_id):
     """Delete a task"""
+    if tasks_col is None:
+        flash("Database connection error", "error")
+        return redirect(url_for('index'))
+        
     try:
-        tasks_col.delete_one({"_id": ObjectId(task_id)})
-        flash('Task deleted successfully!', 'success')
+        result = tasks_col.delete_one({"_id": ObjectId(task_id)})
+        if result.deleted_count > 0:
+            flash('Task deleted successfully!', 'success')
+        else:
+            flash('Task not found!', 'error')
     except Exception as e:
         flash(f'Error deleting task: {e}', 'error')
     return redirect(url_for('index'))
@@ -307,9 +360,16 @@ def delete_task(task_id):
 @app.route('/update_status/<task_id>/<status>')
 def update_status(task_id, status):
     """Update task status"""
+    if tasks_col is None:
+        flash("Database connection error", "error")
+        return redirect(url_for('index'))
+        
     try:
-        tasks_col.update_one({"_id": ObjectId(task_id)}, {"$set": {"status": status}})
-        flash('Status updated successfully!', 'success')
+        result = tasks_col.update_one({"_id": ObjectId(task_id)}, {"$set": {"status": status}})
+        if result.modified_count > 0:
+            flash('Status updated successfully!', 'success')
+        else:
+            flash('Task not found!', 'error')
     except Exception as e:
         flash(f'Error updating status: {e}', 'error')
     return redirect(url_for('index'))
@@ -317,14 +377,24 @@ def update_status(task_id, status):
 @app.route('/view_by_class/<class_name>')
 def view_by_class(class_name):
     """View tasks filtered by class"""
+    if tasks_col is None:
+        flash("Database connection error", "error")
+        return render_template('view_by_class.html', tasks=[], class_name=class_name, class_count=0)
+        
     tasks = []
     try:
         cursor = tasks_col.find({"course": class_name}).sort("due", 1)
         for doc in cursor:
             task = dict(doc)
             task['id'] = str(doc.get('_id'))
-            task['start_formatted'] = datetime.strptime(task.get("start"), "%Y-%m-%d %H:%M:%S").strftime("%m/%d/%y %I:%M %p")
-            task['due_formatted'] = datetime.strptime(task.get("due"), "%Y-%m-%d %H:%M:%S").strftime("%m/%d/%y %I:%M %p")
+            try:
+                start_dt = datetime.strptime(task.get("start", ""), "%Y-%m-%d %H:%M:%S")
+                due_dt = datetime.strptime(task.get("due", ""), "%Y-%m-%d %H:%M:%S")
+                task['start_formatted'] = start_dt.strftime("%m/%d/%y %I:%M %p")
+                task['due_formatted'] = due_dt.strftime("%m/%d/%y %I:%M %p")
+            except (ValueError, TypeError):
+                task['start_formatted'] = "Invalid Date"
+                task['due_formatted'] = "Invalid Date"
             tasks.append(task)
     except Exception as e:
         flash(f"Error loading tasks: {e}", "error")
@@ -334,6 +404,10 @@ def view_by_class(class_name):
 @app.route('/view_completed')
 def view_completed():
     """View completed and graded tasks"""
+    if tasks_col is None:
+        flash("Database connection error", "error")
+        return render_template('view_completed.html', tasks=[], completed_count=0)
+        
     tasks = []
     try:
         cursor = tasks_col.find({"status": {"$in": ["Completed", "Graded"]}}).sort("due", 1)
@@ -341,8 +415,14 @@ def view_completed():
             task = dict(doc)
             task['id'] = str(doc.get('_id'))
             # Format dates for display
-            task['start_formatted'] = datetime.strptime(task.get("start"), "%Y-%m-%d %H:%M:%S").strftime("%m/%d/%y %I:%M %p")
-            task['due_formatted'] = datetime.strptime(task.get("due"), "%Y-%m-%d %H:%M:%S").strftime("%m/%d/%y %I:%M %p")
+            try:
+                start_dt = datetime.strptime(task.get("start", ""), "%Y-%m-%d %H:%M:%S")
+                due_dt = datetime.strptime(task.get("due", ""), "%Y-%m-%d %H:%M:%S")
+                task['start_formatted'] = start_dt.strftime("%m/%d/%y %I:%M %p")
+                task['due_formatted'] = due_dt.strftime("%m/%d/%y %I:%M %p")
+            except (ValueError, TypeError):
+                task['start_formatted'] = "Invalid Date"
+                task['due_formatted'] = "Invalid Date"
             tasks.append(task)
     except Exception as e:
         flash(f"Error loading completed tasks: {e}", "error")
@@ -352,6 +432,10 @@ def view_completed():
 @app.route('/view_active')
 def view_active():
     """View not started and in progress tasks"""
+    if tasks_col is None:
+        flash("Database connection error", "error")
+        return render_template('view_active.html', tasks=[], active_count=0)
+        
     tasks = []
     try:
         cursor = tasks_col.find({"status": {"$in": ["Not Started", "In Progress"]}}).sort("due", 1)
@@ -359,8 +443,14 @@ def view_active():
             task = dict(doc)
             task['id'] = str(doc.get('_id'))
             # Format dates for display
-            task['start_formatted'] = datetime.strptime(task.get("start"), "%Y-%m-%d %H:%M:%S").strftime("%m/%d/%y %I:%M %p")
-            task['due_formatted'] = datetime.strptime(task.get("due"), "%Y-%m-%d %H:%M:%S").strftime("%m/%d/%y %I:%M %p")
+            try:
+                start_dt = datetime.strptime(task.get("start", ""), "%Y-%m-%d %H:%M:%S")
+                due_dt = datetime.strptime(task.get("due", ""), "%Y-%m-%d %H:%M:%S")
+                task['start_formatted'] = start_dt.strftime("%m/%d/%y %I:%M %p")
+                task['due_formatted'] = due_dt.strftime("%m/%d/%y %I:%M %p")
+            except (ValueError, TypeError):
+                task['start_formatted'] = "Invalid Date"
+                task['due_formatted'] = "Invalid Date"
             tasks.append(task)
     except Exception as e:
         flash(f"Error loading active tasks: {e}", "error")
@@ -370,6 +460,10 @@ def view_active():
 @app.route('/delete_all_tasks')
 def delete_all_tasks():
     """Delete all tasks with confirmation"""
+    if tasks_col is None:
+        flash("Database connection error", "error")
+        return redirect(url_for('index'))
+        
     try:
         result = tasks_col.delete_many({})
         deleted_count = result.deleted_count
@@ -377,39 +471,6 @@ def delete_all_tasks():
     except Exception as e:
         flash(f'Error deleting all tasks: {e}', 'error')
     return redirect(url_for('index'))
-
-# --- Email reminder functionality (simplified for web) ---
-def reminder_loop():
-    """Background reminder loop (simplified version)"""
-    global reminder_thread_running
-    reminder_thread_running = True
-    
-    while reminder_thread_running:
-        try:
-            now = datetime.now()
-            cursor = tasks_col.find({})
-            
-            for doc in cursor:
-                task = dict(doc)
-                task_id = str(doc.get('_id'))
-                due = datetime.strptime(task["due"], "%Y-%m-%d %H:%M:%S")
-                reminder_hours = task.get("reminder_hours", 24)
-                reminder_sent = task.get("reminder_sent", 0)
-                status = task.get("status", "Not Started")
-                
-                # Simple reminder logic (no email for web version)
-                if due - timedelta(hours=reminder_hours) <= now < due and status != "Completed" and reminder_sent == 0:
-                    print(f"Reminder: {task['name']} is due soon!")
-                    tasks_col.update_one({"_id": ObjectId(task_id)}, {"$set": {"reminder_sent": 1}})
-            
-            time.sleep(60)  # Check every minute
-        except Exception as e:
-            print(f"Error in reminder loop: {e}")
-            time.sleep(60)
-
-# Start reminder loop in background
-if not reminder_thread_running:
-    threading.Thread(target=reminder_loop, daemon=True).start()
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=8080)
