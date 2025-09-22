@@ -11,6 +11,72 @@ import os
 from dotenv import load_dotenv
 import threading
 import time
+from email_utils import send_email
+from bson.objectid import ObjectId
+
+
+def reminder_loop():
+    """Background email reminder loop for Flask app"""
+    global reminder_thread_running
+    reminder_thread_running = True
+
+    while reminder_thread_running:
+        try:
+            now = datetime.now()
+            cursor = tasks_col.find({})
+
+            for doc in cursor:
+                task = dict(doc)
+                task_id = str(doc.get("_id"))
+                due = datetime.strptime(task["due"], "%Y-%m-%d %H:%M:%S")
+                reminder_hours = task.get("reminder_hours", 24)
+                reminder_sent = task.get("reminder_sent", 0)
+                status = task.get("status", "Not Started")
+
+                # Only send reminder if not already sent and task is not completed
+                if due - timedelta(hours=reminder_hours) <= now < due and status != "Completed" and reminder_sent == 0:
+                    try:
+                        # Use email_locks_col to avoid duplicates across devices
+                        email_lock_key = f"email_lock_{task_id}_{due.strftime('%Y-%m-%d-%H')}"
+
+                        # Check if another thread/device already sent this reminder
+                        if email_locks_col.find_one({"_id": email_lock_key}):
+                            continue  # skip sending
+
+                        # Acquire lock
+                        email_locks_col.insert_one({
+                            "_id": email_lock_key,
+                            "task_id": task_id,
+                            "acquired_at": now.strftime("%Y-%m-%d %H:%M:%S"),
+                            "expires_at": (now + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+                        })
+
+                        # Send email
+                        send_email(
+                            os.getenv("EMAIL_USER"),
+                            f"Reminder: {task['name']} is due soon",
+                            f"Your assignment '{task['name']}' for {task['course']} is due at {due.strftime('%m/%d/%y %I:%M %p')}"
+                        )
+
+                        # Mark reminder as sent
+                        tasks_col.update_one({"_id": ObjectId(task_id)}, {"$set": {"reminder_sent": 1}})
+
+                        # Release lock
+                        email_locks_col.delete_one({"_id": email_lock_key})
+
+                    except Exception as e:
+                        print(f"Failed to send reminder for task {task['name']}: {e}")
+                        # Clean up lock if something went wrong
+                        try:
+                            email_locks_col.delete_one({"_id": email_lock_key})
+                        except:
+                            pass
+
+            time.sleep(60)  # check every minute
+
+        except Exception as e:
+            print(f"Error in reminder loop: {e}")
+            time.sleep(60)
 
 # Load environment variables
 load_dotenv()
@@ -25,18 +91,16 @@ def get_db():
     if not db_user or not db_password:
         raise Exception("DB_USER and dbPassword must be set in .env")
 
-    mongo_uri = f"mongodb+srv://{db_user}:{db_password}@taskmanager.3gfydvt.mongodb.net/taskmanager?retryWrites=true&w=majority&appName=taskmanger"
+    mongo_uri = f"mongodb+srv://jh:{db_password}@taskmanger.3gfydvt.mongodb.net/?retryWrites=true&w=majority&appName=taskmanger"
     db_name = os.getenv("DB_NAME", "TaskManager")
-    client = client = MongoClient(mongo_uri, tls=True, tlsAllowInvalidCertificates=False)
+    client = MongoClient(mongo_uri, tls=True, tlsAllowInvalidCertificates=False)
     return client[db_name]
 
 db = get_db()
 tasks_col = db["tasks"]
 email_locks_col = db["email_locks"]
 
-db = get_db()
-tasks_col = db['tasks']
-email_locks_col = db['email_locks']
+
 
 # Global variable to track if reminder loop is running
 reminder_thread_running = False
@@ -138,7 +202,31 @@ def create_due_weekday_instance(name, course, start_dt, due_dt, reminder_hours, 
 
 # --- Routes ---
 @app.route('/')
+
+@app.route('/')
 def index():
+    try:
+        # Fetch all tasks from MongoDB and convert cursor to list
+        tasks = list(db.tasks.find())
+
+        # Safely separate tasks into active and completed
+        active_tasks = [t for t in tasks if not t.get('completed', False)]
+        completed_tasks = [t for t in tasks if t.get('completed', False)]
+
+        # Pass everything to the template
+        return render_template(
+            'index.html',
+            tasks=tasks,
+            total_count=len(tasks),
+            active_count=len(active_tasks),
+            completed_count=len(completed_tasks)
+        )
+
+    except Exception as e:
+        # Log the error for debugging
+        print(f"Error in index(): {e}")
+        # Optionally, show a friendly error page
+        return render_template('error.html', message="An error occurred loading tasks.")
     """Main page showing all tasks"""
     tasks = []
     try:

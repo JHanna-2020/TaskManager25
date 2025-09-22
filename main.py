@@ -22,14 +22,18 @@ def get_db():
     if not db_user or not db_password:
         raise Exception("DB_USER and dbPassword must be set in .env")
 
-    mongo_uri = f"mongodb+srv://{db_user}:{db_password}@taskmanger.3gfydvt.mongodb.net/taskmanager?retryWrites=true&w=majority&appName=taskmanger"
+    mongo_uri = f"mongodb+srv://{db_user}:{db_password}@taskmanager.3gfydvt.mongodb.net/taskmanager?retryWrites=true&w=majority&appName=taskmanger"
     db_name = os.getenv("DB_NAME", "TaskManager")
-    client = MongoClient(mongo_uri)
+    client = client = MongoClient(mongo_uri, tls=True, tlsAllowInvalidCertificates=False)
     return client[db_name]
 
 db = get_db()
 tasks_col = db["tasks"]
 email_locks_col = db["email_locks"]
+
+db = get_db()
+tasks_col = db['tasks']
+email_locks_col = db['email_locks']
 
 # --- Decode recurrence days (bitmask) ---
 def decode_recurrence_days(bitmask):
@@ -135,8 +139,7 @@ root.title("Task Manager")
 root.geometry("900x700")
 
 def on_close():
-    root.withdraw()
-root.protocol("WM_DELETE_WINDOW", on_close)
+    root.destroy()   # instead of withdraw
 
 # --- Treeview Setup ---
 tree = ttk.Treeview(root, columns=("Name", "Class", "Start", "Due", "Status"), show="headings")
@@ -667,5 +670,7 @@ def reminder_loop():
 threading.Thread(target=reminder_loop, daemon=True).start()
 
 # --- System Tray ---
-setup_tray()
+# setup_tray()
+
+
 root.mainloop()
