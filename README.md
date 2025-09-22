@@ -1,152 +1,128 @@
-# Task Manager
+# Task Manager 2.5
+[![Ask DeepWiki](https://devin.ai/assets/askdeepwiki.png)](https://deepwiki.com/JHanna-2020/TaskManager25)
 
-A comprehensive task management application with both desktop and web interfaces, featuring Firebase integration, email reminders, and recurring task support.
+A comprehensive task management application with synchronized desktop and web interfaces, built with a MongoDB backend, offering email reminders, and recurring task support.
 
 ## Features
 
-### Desktop App (main.py)
-- **GUI Interface** - Built with tkinter for cross-platform desktop use
-- **Firebase Integration** - Real-time cloud synchronization
-- **Email Reminders** - Automated email notifications before due dates
-- **Recurring Tasks** - Support for tasks that repeat on specific days
-- **Class Filtering** - Organize tasks by academic classes
-- **System Tray** - Runs in background with system tray integration
-- **Status Management** - Track task progress (Not Started, In Progress, Completed, Graded)
+This project provides two distinct interfaces that share the same real-time database.
 
-### Web App (web_app.py)
-- **Mobile-Friendly** - Responsive design for phones, tablets, and desktops
-- **Cross-Platform** - Works on any device with a web browser
-- **Real-Time Sync** - Same data as desktop app via Firebase
-- **Modern UI** - Clean, professional interface with Bootstrap
-- **Touch Optimized** - Designed for mobile interaction
+### Desktop App (`main.py`)
+- **Native GUI:** Built with Python's `tkinter` for a traditional desktop experience.
+- **Background Operation:** Can run in the system tray for continuous monitoring.
+- **Email Reminders:** Automatically sends email notifications for upcoming deadlines.
+- **Status Tracking:** Manage tasks with statuses: `Not Started`, `In Progress`, `Completed`, and `Graded`.
+- **Class Filtering:** Organize and view tasks by academic course.
+- **Recurring Tasks:** Set up tasks that repeat on specific days of the week.
+
+### Web App (`web_app.py`)
+- **Responsive UI:** Modern interface built with Flask and Bootstrap, optimized for desktops, tablets, and phones.
+- **Cross-Platform Access:** Accessible from any device with a web browser on the same local network.
+- **Full Functionality:** Supports adding, editing, deleting, and updating tasks.
+- **Filtered Views:** Easily view all, active, or completed tasks, or filter by class.
+- **Mobile-First Actions:** Quick-action buttons and dropdowns for easy management on touch devices.
 
 ## Setup Instructions
 
 ### Prerequisites
 - Python 3.8 or higher
-- Firebase project with Firestore database
-- Gmail account (for email reminders)
+- A MongoDB Atlas account for the cloud database
+- A Gmail account for sending email reminders (with 2-Factor Authentication enabled)
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/yourusername/TaskManager.git
-cd TaskManager
+git clone https://github.com/JHanna-2020/TaskManager25.git
+cd TaskManager25
 ```
 
 ### 2. Install Dependencies
+The project has separate dependencies for the desktop and web versions.
 
-#### For Desktop App:
+**For the Desktop App:**
 ```bash
 pip install -r requirements.txt
 ```
 
-#### For Web App:
+**For the Web App:**
 ```bash
 pip install -r requirements_web.txt
 ```
 
-### 3. Firebase Setup
-1. Create a Firebase project at https://console.firebase.google.com
-2. Enable Firestore database
-3. Generate a service account key
-4. Download the key file and rename it to `serviceAccountKey.json`
-5. Place it in the project root directory
+### 3. Configure MongoDB Atlas
+1.  **Create a free cluster** on [MongoDB Atlas](https://www.mongodb.com/cloud/atlas/register).
+2.  **Create a Database User:** In the "Database Access" section, create a new user. Note the username and password.
+3.  **Whitelist your IP Address:** In the "Network Access" section, add your current IP address or `0.0.0.0/0` to allow access from anywhere (less secure).
+4.  **Get a Connection String:** Go to your cluster's "Overview" tab, click "Connect", choose "Drivers", and copy the Python connection string (`mongodb+srv://...`). You will need this for the `.env` file.
 
-### 4. Environment Configuration
-Create a `.env` file in the project root:
+### 4. Create Environment File
+Create a file named `.env` in the root of the project directory and add the following variables. Replace the placeholder values with your credentials.
+
 ```env
+# MongoDB Credentials (from Step 3)
+DB_USER=your_mongo_db_username
+DB_PASSWORD=your_mongo_db_password
+
+# Email Credentials (for reminders)
 EMAIL_USER=your-email@gmail.com
 EMAIL_PASSWORD=your-gmail-app-password
-SECRET_KEY=your-secret-key-for-web-app
-```
 
-**Note:** Use Gmail App Password, not your regular password. Enable 2-Factor Authentication and generate an App Password at https://myaccount.google.com/apppasswords
+# Flask Web App Secret Key
+SECRET_KEY=a_long_random_and_secret_string
+```
+**Important:** For `EMAIL_PASSWORD`, you must generate a **Gmail App Password**. Do not use your regular account password. You can create one here: [Google Account App Passwords](https://myaccount.google.com/apppasswords).
 
 ## Usage
 
-### Desktop App
+### Running the Desktop App
+Execute the `main.py` script to launch the Tkinter GUI.
 ```bash
 python main.py
 ```
 
-### Web App
+### Running the Web App
+Execute the `start_web_app.py` script.
 ```bash
 python start_web_app.py
 ```
-Then open http://localhost:5000 in your browser
-
-### Mobile Access
-- Start the web app on your computer
-- Find your computer's IP address
-- Access via http://[your-ip]:5000 from any device on the same network
+-   Access the web app on your local machine at `http://localhost:8080`.
+-   To access from other devices (like a phone) on the same Wi-Fi network, find your computer's local IP address and navigate to `http://<YOUR_IP_ADDRESS>:8080`.
 
 ## Project Structure
-
 ```
-TaskManager/
-├── main.py                 # Desktop application
-├── web_app.py             # Web application
-├── start_web_app.py       # Web app startup script
-├── email_utils.py         # Email functionality
-├── reminders.py           # Reminder scheduling
-├── requirements.txt       # Desktop app dependencies
-├── requirements_web.txt   # Web app dependencies
-├── templates/             # Web app HTML templates
-│   ├── base.html
-│   ├── index.html
-│   ├── add_task.html
-│   ├── edit_task.html
-│   └── view_by_class.html
-├── serviceAccountKey.json # Firebase credentials (not in repo)
-├── .env                   # Environment variables (not in repo)
-└── README.md
+TaskManager25/
+├── main.py                 # Main script for the desktop (Tkinter) application
+├── web_app.py              # Core logic for the web (Flask) application
+├── start_web_app.py        # Startup script for the web server
+├── email_utils.py          # Handles sending email notifications via Gmail SMTP
+├── reminders.py            # Background scheduler for reminder jobs
+│
+├── requirements.txt        # Dependencies for the desktop app
+├── requirements_web.txt    # Dependencies for the web app
+│
+├── templates/              # HTML templates for the Flask web app
+│   ├── base.html           # Base template with navbar and styling
+│   ├── index.html          # Main page showing all tasks
+│   ├── add_task.html       # Form for adding a new task
+│   ├── edit_task.html      # Form for editing an existing task
+│   ├── view_active.html    # View for active tasks
+│   ├── view_completed.html # View for completed tasks
+│   └── view_by_class.html  # View for tasks filtered by class
+│
+├── .env                    # (You create this) Stores secret credentials
+└── README.md               # This file
 ```
-
-## Features in Detail
-
-### Task Management
-- **Add Tasks** - Create new assignments with due dates, classes, and reminders
-- **Edit Tasks** - Modify existing tasks
-- **Delete Tasks** - Remove individual tasks or all tasks
-- **Status Updates** - Change task status with dropdown selection
-
-### Recurring Tasks
-- **Set Recurrence** - Choose specific days of the week for task repetition
-- **Automatic Creation** - Future instances created automatically
-- **Multiple Instances** - See all upcoming occurrences in your task list
-
-### Class Organization
-- **Class Filtering** - View tasks by specific academic classes
-- **Class View Window** - Dedicated interface for class-specific tasks
-
-### Email Reminders
-- **Configurable Timing** - Set reminder hours before due date
-- **Duplicate Prevention** - Email lock system prevents multiple devices from sending same reminder
-- **Test Functionality** - Built-in email testing
-
-### Cross-Device Sync
-- **Real-Time Updates** - Changes sync instantly across all devices
-- **Cloud Storage** - All data stored in Firebase Firestore
-- **Platform Independent** - Works on Windows, Mac, Linux, phones, tablets
-
-## Security Notes
-
-- **Never commit** `serviceAccountKey.json` or `.env` files
-- **Use App Passwords** for Gmail authentication
-- **Keep Firebase credentials** secure and private
-- **Regular backups** recommended for important data
 
 ## Troubleshooting
+- **MongoDB Connection Error:**
+  -   Ensure your `DB_USER` and `DB_PASSWORD` in the `.env` file are correct.
+  -   Verify that your current IP address is whitelisted in MongoDB Atlas under "Network Access".
+  -   Check that your internet connection is active.
 
-### Common Issues
-1. **Email not working** - Check Gmail App Password setup
-2. **Firebase connection failed** - Verify serviceAccountKey.json is present
-3. **Web app not accessible** - Check firewall settings and IP address
-4. **Tasks not syncing** - Ensure internet connection and Firebase project is active
+- **Email Sending Failed:**
+  -   Confirm you are using a **Gmail App Password** in `EMAIL_PASSWORD`, not your regular login password.
+  -   Ensure 2-Factor Authentication is enabled for the Gmail account.
+  -   Run `python email_utils.py` to test your email configuration directly. The script will send a test email to the `EMAIL_USER` address.
 
-### Support
-For issues or questions, please check the troubleshooting section or create an issue in the GitHub repository.
-
-## License
-
-This project is open source and available under the MIT License.
+- **Web App Not Accessible from Other Devices:**
+  -   Make sure your computer and the other device are on the same Wi-Fi network.
+  -   Check that your computer's firewall is not blocking incoming connections on port `8080`.
