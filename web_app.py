@@ -6,7 +6,6 @@ A Flask-based web application for managing tasks (MongoDB-backed)
 from flask import Flask, render_template, request, jsonify, redirect, url_for, flash
 from datetime import datetime, timedelta
 from pymongo import MongoClient
-from bson.objectid import ObjectId
 import os
 from dotenv import load_dotenv
 import urllib.parse
@@ -298,7 +297,7 @@ def edit_task(task_id):
             
             # Update task
             result = tasks_col.update_one(
-                {"_id": ObjectId(task_id)},
+                {"_id": task_id},
                 {"$set": {
                     "name": name,
                     "course": course,
@@ -321,7 +320,7 @@ def edit_task(task_id):
     
     # Get task data for editing
     try:
-        doc = tasks_col.find_one({"_id": ObjectId(task_id)})
+        doc = tasks_col.find_one({"_id": task_id})
         if doc:
             task = dict(doc)
             task['id'] = str(doc.get('_id'))
@@ -348,7 +347,7 @@ def delete_task(task_id):
         return redirect(url_for('index'))
         
     try:
-        result = tasks_col.delete_one({"_id": ObjectId(task_id)})
+        result = tasks_col.delete_one({"_id": task_id})
         if result.deleted_count > 0:
             flash('Task deleted successfully!', 'success')
         else:
@@ -365,7 +364,7 @@ def update_status(task_id, status):
         return redirect(url_for('index'))
         
     try:
-        result = tasks_col.update_one({"_id": ObjectId(task_id)}, {"$set": {"status": status}})
+        result = tasks_col.update_one({"_id": task_id}, {"$set": {"status": status}})
         if result.modified_count > 0:
             flash('Status updated successfully!', 'success')
         else:
