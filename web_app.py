@@ -22,7 +22,7 @@ def get_db():
     db_user = os.getenv("DB_USER")
     db_password = os.getenv("DB_PASSWORD")  # Fixed: was "dbPassword"
     db_name = os.getenv("DB_NAME", "TaskManager")
-    print(db_user, db_password, db_name)
+
     
     if not db_user or not db_password:
         raise Exception("DB_USER and DB_PASSWORD must be set in .env")
