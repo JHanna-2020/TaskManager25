@@ -10,6 +10,8 @@ import os
 from dotenv import load_dotenv
 import urllib.parse
 from bson.objectid import ObjectId
+from apscheduler.schedulers.background import BackgroundScheduler
+from discord_utils import send_discord_message
 # Load environment variables
 load_dotenv()
 
@@ -205,7 +207,7 @@ def add_task():
     if tasks_col is None:
         flash("Database connection error", "error")
         return render_template('add_task.html')
-        
+
     if request.method == 'POST':
         try:
             # Get form data
@@ -216,20 +218,21 @@ def add_task():
             due_date = request.form.get('due_date')
             due_time = request.form.get('due_time')
             status = request.form.get('status')
-            
+            reminder_hours = int(request.form.get('reminder_hours', 24))
+
             # Validate required fields
             if not all([name, course, start_date, start_time, due_date, due_time]):
                 flash('All fields are required!', 'error')
                 return render_template('add_task.html')
-            
+
             # Parse dates
             start_dt = datetime.strptime(f"{start_date} {start_time}", "%Y-%m-%d %H:%M")
             due_dt = datetime.strptime(f"{due_date} {due_time}", "%Y-%m-%d %H:%M")
-            
+
             # Handle recurrence options
             recurrence_type = request.form.get('recurrence_type', 'none')
             recurrence_days = 0
-            
+
             if recurrence_type == 'weekly':
                 # Use the current bitmask system for specific days
                 day_map = {'mon': 1, 'tue': 2, 'wed': 4, 'thu': 8, 'fri': 16, 'sat': 32, 'sun': 64}
@@ -239,7 +242,7 @@ def add_task():
             elif recurrence_type == 'due_weekday':
                 # Set a special flag for due weekday recurrence
                 recurrence_days = -1  # Special value to indicate due weekday recurrence
-            
+
             # Create task
             insert_result = tasks_col.insert_one({
                 "name": name,
@@ -248,26 +251,27 @@ def add_task():
                 "due": due_dt.strftime("%Y-%m-%d %H:%M:%S"),
                 "status": status,
                 "recurrence_days": recurrence_days,
-                "is_recurring_instance": False
+                "is_recurring_instance": False,
+                "reminder_hours": reminder_hours,
+                "reminder_sent": 0  # Initialize reminder_sent to 0
             })
-            
+
             # If recurring task, create future instances
             if recurrence_days > 0:
                 create_future_recurring_instances(name, course, start_dt, due_dt, recurrence_days, insert_result.inserted_id)
             elif recurrence_days == -1:
                 # For due weekday recurrence, create next week's instance
                 create_due_weekday_instance(name, course, start_dt, due_dt, insert_result.inserted_id)
-            
+
             flash('Task added successfully!', 'success')
             return redirect(url_for('index'))
-            
+
         except ValueError as e:
             flash(f'Invalid date/time format: {e}', 'error')
         except Exception as e:
             flash(f'Error adding task: {e}', 'error')
-    
-    return render_template('add_task.html')
 
+    return render_template('add_task.html')
 
 @app.route('/edit_task/<task_id>', methods=['GET', 'POST'])
 def edit_task(task_id):
@@ -482,5 +486,25 @@ def delete_all_tasks():
         flash(f'Error deleting all tasks: {e}', 'error')
     return redirect(url_for('index'))
 
+# discord reminder
+def check_reminders():
+    """Checks for tasks that are due and sends Discord reminders."""
+    with app.app_context():
+        now = datetime.now()
+        tasks = tasks_col.find({"status": {"$ne": "Completed"}, "reminder_sent": 0})
+
+        for task in tasks:
+            due = datetime.strptime(task["due"], "%Y-%m-%d %H:%M:%S")
+            reminder_hours = task.get("reminder_hours", 24)
+            reminder_time = due - timedelta(hours=reminder_hours)
+
+            if reminder_time <= now < due:
+                message = f"Reminder: Your task '{task['name']}' is due at {due.strftime('%I:%M %p')}."
+                send_discord_message(message)
+                tasks_col.update_one({"_id": task["_id"]}, {"$set": {"reminder_sent": 1}})
+
+scheduler = BackgroundScheduler(daemon=True)
+scheduler.add_job(check_reminders, 'interval', seconds=60)
+scheduler.start()
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=8080)
