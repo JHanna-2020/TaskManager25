@@ -9,7 +9,7 @@ from pymongo import MongoClient
 import os
 from dotenv import load_dotenv
 import urllib.parse
-
+from bson.objectid import ObjectId
 # Load environment variables
 load_dotenv()
 
@@ -268,13 +268,14 @@ def add_task():
     
     return render_template('add_task.html')
 
+
 @app.route('/edit_task/<task_id>', methods=['GET', 'POST'])
 def edit_task(task_id):
     """Edit an existing task"""
     if tasks_col is None:
         flash("Database connection error", "error")
         return redirect(url_for('index'))
-        
+
     if request.method == 'POST':
         try:
             # Get form data
@@ -285,19 +286,19 @@ def edit_task(task_id):
             due_date = request.form.get('due_date')
             due_time = request.form.get('due_time')
             status = request.form.get('status')
-            
+
             # Validate required fields
             if not all([name, course, start_date, start_time, due_date, due_time]):
                 flash('All fields are required!', 'error')
                 return redirect(url_for('edit_task', task_id=task_id))
-            
+
             # Parse dates
             start_dt = datetime.strptime(f"{start_date} {start_time}", "%Y-%m-%d %H:%M")
             due_dt = datetime.strptime(f"{due_date} {due_time}", "%Y-%m-%d %H:%M")
-            
+
             # Update task
             result = tasks_col.update_one(
-                {"_id": task_id},
+                {"_id": ObjectId(task_id)},
                 {"$set": {
                     "name": name,
                     "course": course,
@@ -306,21 +307,21 @@ def edit_task(task_id):
                     "status": status
                 }}
             )
-            
+
             if result.modified_count > 0:
                 flash('Task updated successfully!', 'success')
             else:
                 flash('No changes made to task.', 'info')
             return redirect(url_for('index'))
-            
+
         except ValueError as e:
             flash(f'Invalid date/time format: {e}', 'error')
         except Exception as e:
             flash(f'Error updating task: {e}', 'error')
-    
+
     # Get task data for editing
     try:
-        doc = tasks_col.find_one({"_id": task_id})
+        doc = tasks_col.find_one({"_id": ObjectId(task_id)})
         if doc:
             task = dict(doc)
             task['id'] = str(doc.get('_id'))
@@ -339,21 +340,26 @@ def edit_task(task_id):
         flash(f'Error loading task: {e}', 'error')
         return redirect(url_for('index'))
 
+
 @app.route('/delete_task/<task_id>')
 def delete_task(task_id):
     """Delete a task"""
     if tasks_col is None:
         flash("Database connection error", "error")
         return redirect(url_for('index'))
-        
+
     try:
-        result = tasks_col.delete_one({"_id": task_id})
+        # Convert the task_id string to an ObjectId before deleting
+        result = tasks_col.delete_one({"_id": ObjectId(task_id)})
+
         if result.deleted_count > 0:
             flash('Task deleted successfully!', 'success')
         else:
             flash('Task not found!', 'error')
+
     except Exception as e:
         flash(f'Error deleting task: {e}', 'error')
+
     return redirect(url_for('index'))
 
 @app.route('/update_status/<task_id>/<status>')
@@ -362,15 +368,20 @@ def update_status(task_id, status):
     if tasks_col is None:
         flash("Database connection error", "error")
         return redirect(url_for('index'))
-        
+
     try:
-        result = tasks_col.update_one({"_id": task_id}, {"$set": {"status": status}})
+        # Convert task_id string to ObjectId and update the document
+        result = tasks_col.update_one({"_id": ObjectId(task_id)}, {"$set": {"status": status}})
+
         if result.modified_count > 0:
             flash('Status updated successfully!', 'success')
         else:
-            flash('Task not found!', 'error')
+            # This could happen if the task ID is not found
+            flash('Task not found or status was not changed!', 'error')
+
     except Exception as e:
         flash(f'Error updating status: {e}', 'error')
+
     return redirect(url_for('index'))
 
 @app.route('/view_by_class/<class_name>')
