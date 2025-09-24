@@ -12,6 +12,10 @@ import urllib.parse
 from bson.objectid import ObjectId
 from apscheduler.schedulers.background import BackgroundScheduler
 from discord_utils import send_discord_message
+import pandas as pd
+from openpyxl.styles import PatternFill
+from flask import send_file
+import io
 # Load environment variables
 load_dotenv()
 
@@ -506,5 +510,51 @@ def check_reminders():
 scheduler = BackgroundScheduler(daemon=True)
 scheduler.add_job(check_reminders, 'interval', seconds=60)
 scheduler.start()
+@app.route('/export')
+def export_to_excel():
+    """Exports the task list to an Excel file."""
+    tasks = list(tasks_col.find({}))
+    if not tasks:
+        flash('No tasks to export!', 'info')
+        return redirect(url_for('index'))
+
+    df = pd.DataFrame(tasks)
+
+    # Format the dataframe to be more readable
+    df['start'] = pd.to_datetime(df['start']).dt.strftime('%m/%d/%y %I:%M %p')
+    df['due'] = pd.to_datetime(df['due']).dt.strftime('%m/%d/%y %I:%M %p')
+
+    # Define the columns to export
+    df = df[['name', 'course', 'start', 'due', 'status']]
+    df.columns = ['Task Name', 'Class', 'Start Date', 'Due Date', 'Status']
+
+    # Create an in-memory Excel file
+    output = io.BytesIO()
+    writer = pd.ExcelWriter(output, engine='openpyxl')
+    df.to_excel(writer, index=False, sheet_name='Tasks')
+
+    workbook = writer.book
+    worksheet = writer.sheets['Tasks']
+
+    # Define the colors for each status
+    colors = {
+        'Not Started': 'FF7171',  # Red
+        'In Progress': 'FFFACD',  # Yellow
+        'Completed': 'D0F0C0',    # Green
+        'Graded': 'ADD8E6'        # Blue
+    }
+
+    # Apply the colors to the rows
+    for index, row in df.iterrows():
+        status = row['Status']
+        if status in colors:
+            fill = PatternFill(start_color=colors[status], end_color=colors[status], fill_type="solid")
+            for col_idx in range(1, len(df.columns) + 1):
+                worksheet.cell(row=index + 2, column=col_idx).fill = fill
+
+    writer.close()
+    output.seek(0)
+
+    return send_file(output, download_name="tasks.xlsx", as_attachment=True)
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=8080)
