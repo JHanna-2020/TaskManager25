@@ -143,6 +143,21 @@
         });
     </script>
     
-    {% block scripts %}{% endblock %}
+    {% block scripts %}
+    <script>
+        // Wait for the document to be fully loaded
+        document.addEventListener('DOMContentLoaded', function() {
+            // Set a timeout for 3 seconds
+            setTimeout(function() {
+                // Find all alert messages
+                let alerts = document.querySelectorAll('.alert');
+                // Loop through each alert and close it
+                alerts.forEach(function(alert) {
+                    new bootstrap.Alert(alert).close();
+                });
+            }, 2000); // 2000 milliseconds = 2 seconds
+        });
+    </script>
+    {% endblock %}
 </body>
 </html>
