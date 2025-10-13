@@ -1,39 +1,29 @@
-import tkinter as tk
-from tkinter import messagebox, ttk
-from tkcalendar import DateEntry
-from datetime import datetime, timedelta
-import threading
-import time
+"""
+Main application module for Task Manager
+"""
 import os
 import sys
+import time
+import tkinter as tk
+from tkinter import ttk, messagebox
+from datetime import datetime, timedelta
+from bson import ObjectId
+import pymongo
 from dotenv import load_dotenv
-print("✅ TaskManager started successfully!", file=sys.stderr)
+import threading
+from discord_utils import send_discord_message
+from tkcalendar import DateEntry  # Added for date entry widgets
 
+# Load environment variables
 load_dotenv()
 
-from pymongo import MongoClient
-from bson.objectid import ObjectId
-
-from email_utils import send_email
-
-def get_db():
-    db_user = os.getenv("DB_USER")
-    db_password = os.getenv("dbPassword")
-    if not db_user or not db_password:
-        raise Exception("DB_USER and dbPassword must be set in .env")
-
-    mongo_uri = f"mongodb+srv://{db_user}:{db_password}@taskmanager.3gfydvt.mongodb.net/taskmanager?retryWrites=true&w=majority&appName=taskmanger"
-    db_name = os.getenv("DB_NAME", "TaskManager")
-    client = client = MongoClient(mongo_uri, tls=True, tlsAllowInvalidCertificates=False)
-    return client[db_name]
-
-db = get_db()
+# Initialize MongoDB connection
+client = pymongo.MongoClient(os.getenv("MONGODB_URI"))
+db = client["taskmanager"]
 tasks_col = db["tasks"]
-email_locks_col = db["email_locks"]
+settings_col = db["settings"]
 
-db = get_db()
-tasks_col = db['tasks']
-email_locks_col = db['email_locks']
+print("✅ TaskManager started successfully!", file=sys.stderr)
 
 # --- Decode recurrence days (bitmask) ---
 def decode_recurrence_days(bitmask):
@@ -72,14 +62,13 @@ def create_future_recurring_instances(name, course, start_dt, due_dt, recurrence
     # Create instances for the next 12 weeks
     for week in range(1, 13):  # 12 weeks ahead
         next_occurrence = calculate_next_occurrence(current_due, recurrence_days)
-        if next_occurrence:
+        if next_occurrence and isinstance(next_occurrence, datetime):
             new_start = next_occurrence - duration
-            new_due = next_occurrence
-            
+
             # Check if instance already exists
             exists = tasks_col.find_one({
                 "name": name,
-                "due": new_due.strftime("%Y-%m-%d %H:%M:%S"),
+                "due": next_occurrence.strftime("%Y-%m-%d %H:%M:%S"),
             })
             if not exists:
                 try:
@@ -87,7 +76,7 @@ def create_future_recurring_instances(name, course, start_dt, due_dt, recurrence
                         "name": name,
                         "course": course,
                         "start": new_start.strftime("%Y-%m-%d %H:%M:%S"),
-                        "due": new_due.strftime("%Y-%m-%d %H:%M:%S"),
+                        "due": next_occurrence.strftime("%Y-%m-%d %H:%M:%S"),
                         "status": "Not Started",
                         "recurrence_days": recurrence_days,
                         "reminder_hours": reminder_hours,
@@ -99,7 +88,7 @@ def create_future_recurring_instances(name, course, start_dt, due_dt, recurrence
                     print(f"Failed to create future recurring instance: {e}")
             
             # Update current_due for next iteration
-            current_due = new_due
+            current_due = next_occurrence
         else:
             break
 
@@ -121,6 +110,7 @@ def show_window(icon, item):
     root.deiconify()
     root.lift()
     root.attributes('-topmost', True)
+    # Fixed after() call to use lambda
     root.after(100, lambda: root.attributes('-topmost', False))
 
 def setup_tray():
@@ -548,32 +538,6 @@ def delete_all_tasks():
 
 tk.Button(root, text="Delete All Tasks", command=delete_all_tasks).pack(pady=5)
 
-# --- Test Email Setup Button ---
-def test_email_setup():
-    """Test the email configuration by sending a test email"""
-    try:
-        # Get email from environment
-        test_email = os.getenv("EMAIL_USER")
-        if not test_email:
-            messagebox.showerror("Email Setup Error", "EMAIL_USER not found in .env file")
-            return
-        
-        # Send test email
-        result = send_email(
-            test_email,
-            "Task Manager - Test Email",
-            "This is a test email from your Task Manager application. If you receive this, your email setup is working correctly!"
-        )
-        
-        if result:
-            messagebox.showinfo("Email Test", f"Test email sent successfully to {test_email}!")
-        else:
-            messagebox.showerror("Email Test Failed", "Failed to send test email. Check your .env file and email credentials.")
-            
-    except Exception as e:
-        messagebox.showerror("Email Test Error", f"Error testing email setup: {e}")
-
-tk.Button(root, text="Test Email Setup", command=test_email_setup).pack(pady=5)
 
 # Recurrence is only set when adding new assignments
 
@@ -592,79 +556,49 @@ def reminder_loop():
             status = task.get("status", "Not Started")
             recurrence_days = task.get("recurrence_days", 0)
 
-            # Reminder logic with email lock to prevent duplicates across devices
+            # Reminder logic
             if due - timedelta(hours=reminder_hours) <= now < due and status != "Completed" and reminder_sent == 0:
                 try:
-                    # Try to acquire email lock to prevent duplicate emails from multiple devices
-                    email_lock_key = f"email_lock_{task_id}_{due.strftime('%Y-%m-%d-%H')}"
-                    
-                    # Check if another device is already sending this reminder
-                    lock_doc = email_locks_col.find_one({"_id": email_lock_key})
-                    if lock_doc:
-                        # Another device is handling this reminder
-                        continue
-                    
-                    # Acquire the lock (expires in 1 hour)
-                    email_locks_col.insert_one({
-                        "_id": email_lock_key,
-                        "task_id": task_id,
-                        "acquired_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "expires_at": (datetime.now() + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
-                    })
-                    
-                    # Send the email
-                    send_email(
-                        os.getenv("EMAIL_USER"),
-                        f"Reminder: {task['name']} due soon",
-                        f"Your assignment '{task['name']}' for {task['course']} is due at {due.strftime('%m/%d/%y %I:%M %p')}"
-                    )
-                    
-                    # Mark as sent and clean up lock
+                    # Send Discord notification
+                    reminder_message = f"Task Due Soon: {task['name']}\nDue at: {due.strftime('%m/%d/%y %I:%M %p')}"
+                    send_discord_message(reminder_message)
+
+                    # Mark reminder as sent
                     tasks_col.update_one({"_id": ObjectId(task_id)}, {"$set": {"reminder_sent": 1}})
-                    email_locks_col.delete_one({"_id": email_lock_key})
-                    
                 except Exception as e:
                     print(f"Failed to send reminder: {e}")
-                    # Clean up lock on error
-                    try:
-                        email_locks_col.delete_one({"_id": email_lock_key})
-                    except:
-                        pass
 
-            # Recurring task logic: if recurrence_days > 0, and due date has passed, create next instance
-            if recurrence_days and recurrence_days > 0:
-                # Only create next instance if due has passed (with a little grace period)
-                if now >= due:
-                    # Calculate next occurrence based on recurrence pattern
-                    next_occurrence = calculate_next_occurrence(due, recurrence_days)
-                    if next_occurrence:
-                        # Calculate the duration of the original task
-                        duration = due - start
-                        new_start = next_occurrence - duration
-                        new_due = next_occurrence
-                        
-                        # Check if next instance already exists to avoid duplicates
-                        exists = tasks_col.find_one({"name": task["name"], "due": new_due.strftime("%Y-%m-%d %H:%M:%S")})
-                        if not exists:
-                            # Create new instance of the recurring task
-                            try:
-                                tasks_col.insert_one({
-                                    "name": task["name"],
-                                    "course": task["course"],
-                                    "start": new_start.strftime("%Y-%m-%d %H:%M:%S"),
-                                    "due": new_due.strftime("%Y-%m-%d %H:%M:%S"),
-                                    "status": "Not Started",
-                                    "recurrence_days": recurrence_days,
-                                    "reminder_hours": task.get("reminder_hours", 24),
-                                    "reminder_sent": 0,
-                                    "parent_task_id": task_id,
-                                    "is_recurring_instance": True
-                                })
-                                print(f"Created new recurring task instance: {task['name']} for {new_due.strftime('%m/%d/%y %I:%M %p')}")
-                                # Refresh the treeview from the main thread
-                                root.after(0, load_tasks)
-                            except Exception as e:
-                                print(f"Failed to create recurring task instance: {e}")
+            # Recurring task logic
+            if recurrence_days and recurrence_days > 0 and now >= due:
+                next_occurrence = calculate_next_occurrence(due, recurrence_days)
+                if next_occurrence and isinstance(next_occurrence, datetime):
+                    duration = due - start
+                    new_start = next_occurrence - duration
+
+                    # Check if next instance already exists
+                    exists = tasks_col.find_one({
+                        "name": task["name"],
+                        "due": next_occurrence.strftime("%Y-%m-%d %H:%M:%S")
+                    })
+                    if not exists:
+                        try:
+                            tasks_col.insert_one({
+                                "name": task["name"],
+                                "course": task["course"],
+                                "start": new_start.strftime("%Y-%m-%d %H:%M:%S"),
+                                "due": next_occurrence.strftime("%Y-%m-%d %H:%M:%S"),
+                                "status": "Not Started",
+                                "recurrence_days": recurrence_days,
+                                "reminder_hours": task.get("reminder_hours", 24),
+                                "reminder_sent": 0,
+                                "parent_task_id": task_id,
+                                "is_recurring_instance": True
+                            })
+                            print(f"Created new recurring task instance: {task['name']} for {next_occurrence.strftime('%m/%d/%y %I:%M %p')}")
+                            # Refresh the treeview from the main thread
+                            root.after(0, load_tasks, ())
+                        except Exception as e:
+                            print(f"Failed to create recurring task instance: {e}")
         time.sleep(60)
 
 threading.Thread(target=reminder_loop, daemon=True).start()

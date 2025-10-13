@@ -16,6 +16,7 @@ import pandas as pd
 from openpyxl.styles import PatternFill
 from flask import send_file
 import io
+
 # Load environment variables
 load_dotenv()
 
@@ -504,8 +505,11 @@ def check_reminders():
 
             if reminder_time <= now < due:
                 message = f"Reminder: Your task '{task['name']}' is due at {due.strftime('%I:%M %p')}."
-                send_discord_message(message)
-                tasks_col.update_one({"_id": task["_id"]}, {"$set": {"reminder_sent": 1}})
+                try:
+                    send_discord_message(message)
+                    tasks_col.update_one({"_id": task["_id"]}, {"$set": {"reminder_sent": 1}})
+                except Exception as e:
+                    print(f"Failed to send Discord reminder: {e}")
 
 scheduler = BackgroundScheduler(daemon=True)
 scheduler.add_job(check_reminders, 'interval', seconds=60)
@@ -555,6 +559,11 @@ def export_to_excel():
     writer.close()
     output.seek(0)
 
-    return send_file(output, download_name="tasks.xlsx", as_attachment=True)
+    # Get the current date and format it
+    current_date = datetime.now().strftime("%m-%d-%y")
+    # Create the new filename with the date
+    filename = f"tasks_{current_date}.xlsx"
+
+    return send_file(output, download_name=filename, as_attachment=True)
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=8080)
