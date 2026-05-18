@@ -7,21 +7,23 @@ import time
 import tkinter as tk
 from tkinter import ttk, messagebox
 from datetime import datetime, timedelta
-from bson import ObjectId
-import pymongo
+import firebase_admin
+from firebase_admin import credentials, firestore
 from dotenv import load_dotenv
 import threading
 from discord_utils import send_discord_message
-from tkcalendar import DateEntry  # Added for date entry widgets
+from tkcalendar import DateEntry
 
 # Load environment variables
 load_dotenv()
 
-# Initialize MongoDB connection
-client = pymongo.MongoClient(os.getenv("MONGODB_URI"))
-db = client["taskmanager"]
-tasks_col = db["tasks"]
-settings_col = db["settings"]
+# Initialize Firebase/Firestore
+if not firebase_admin._apps:
+    cred = credentials.Certificate(os.getenv("FIREBASE_CREDENTIALS_PATH", "firebase-credentials.json"))
+    firebase_admin.initialize_app(cred)
+
+db_client = firestore.client()
+tasks_col = db_client.collection("tasks")
 
 print("✅ TaskManager started successfully!", file=sys.stderr)
 
@@ -33,50 +35,40 @@ def decode_recurrence_days(bitmask):
 
 # --- Calculate next occurrence based on recurrence pattern ---
 def calculate_next_occurrence(current_due, recurrence_days):
-    """Calculate the next occurrence date based on the recurrence bitmask"""
-    day_map = {1: 0, 2: 1, 4: 2, 8: 3, 16: 4, 32: 5, 64: 6}  # Monday=0, Sunday=6
+    day_map = {1: 0, 2: 1, 4: 2, 8: 3, 16: 4, 32: 5, 64: 6}
     selected_days = [day_map[bit] for bit in day_map.keys() if recurrence_days & bit]
-    
+
     if not selected_days:
         return None
-    
-    # Start from the day after current due date
+
     next_date = current_due + timedelta(days=1)
-    
-    # Look for the next occurrence within the next 7 days
+
     for i in range(7):
         check_date = next_date + timedelta(days=i)
         if check_date.weekday() in selected_days:
-            # Found the next occurrence, set the time to match the original due time
             return check_date.replace(hour=current_due.hour, minute=current_due.minute, second=current_due.second)
-    
-    # If no occurrence found in the next 7 days, return the next week
+
     return next_date + timedelta(days=7)
 
 # --- Create future recurring instances ---
 def create_future_recurring_instances(name, course, start_dt, due_dt, recurrence_days, reminder_hours, parent_task_id):
-    """Create future instances of a recurring task (up to 12 weeks ahead)"""
     current_due = due_dt
     duration = due_dt - start_dt
-    
-    # Create instances for the next 12 weeks
-    for week in range(1, 13):  # 12 weeks ahead
+
+    for week in range(1, 13):
         next_occurrence = calculate_next_occurrence(current_due, recurrence_days)
         if next_occurrence and isinstance(next_occurrence, datetime):
             new_start = next_occurrence - duration
+            due_str = next_occurrence.strftime("%Y-%m-%d %H:%M:%S")
 
-            # Check if instance already exists
-            exists = tasks_col.find_one({
-                "name": name,
-                "due": next_occurrence.strftime("%Y-%m-%d %H:%M:%S"),
-            })
-            if not exists:
+            results = list(tasks_col.where("name", "==", name).where("due", "==", due_str).limit(1).stream())
+            if not results:
                 try:
-                    tasks_col.insert_one({
+                    tasks_col.add({
                         "name": name,
                         "course": course,
                         "start": new_start.strftime("%Y-%m-%d %H:%M:%S"),
-                        "due": next_occurrence.strftime("%Y-%m-%d %H:%M:%S"),
+                        "due": due_str,
                         "status": "Not Started",
                         "recurrence_days": recurrence_days,
                         "reminder_hours": reminder_hours,
@@ -86,8 +78,7 @@ def create_future_recurring_instances(name, course, start_dt, due_dt, recurrence
                     })
                 except Exception as e:
                     print(f"Failed to create future recurring instance: {e}")
-            
-            # Update current_due for next iteration
+
             current_due = next_occurrence
         else:
             break
@@ -110,7 +101,6 @@ def show_window(icon, item):
     root.deiconify()
     root.lift()
     root.attributes('-topmost', True)
-    # Fixed after() call to use lambda
     root.after(100, lambda: root.attributes('-topmost', False))
 
 def setup_tray():
@@ -129,7 +119,7 @@ root.title("Task Manager")
 root.geometry("900x700")
 
 def on_close():
-    root.destroy()   # instead of withdraw
+    root.destroy()
 
 # --- Treeview Setup ---
 tree = ttk.Treeview(root, columns=("Name", "Class", "Start", "Due", "Status"), show="headings")
@@ -148,14 +138,14 @@ tree.tag_configure("Graded", background="#add8e6")
 # --- Load tasks from Firestore ---
 def load_tasks():
     tree.delete(*tree.get_children())
-    tasks = tasks_col.find({}).sort("due", 1)
-    for doc in tasks:
-        task = dict(doc)
+    docs = tasks_col.order_by("due").stream()
+    for doc in docs:
+        task = doc.to_dict()
         status_tag = task.get("status", "Not Started")
         tree.insert(
             "",
             tk.END,
-            iid=str(doc.get("_id")),
+            iid=doc.id,
             values=(
                 task.get("name"),
                 task.get("course"),
@@ -222,9 +212,7 @@ def open_new_window():
     reminder_hours_entry.insert(0, "24")
     reminder_hours_entry.grid(column=1, row=7, sticky="w", padx=5, pady=5)
 
-    # --- Recurrence Days Selection ---
     tk.Label(form_frame, text="Recurrence Days (Mon=1, Tue=2, Wed=4, Thu=8, Fri=16, Sat=32, Sun=64):").grid(column=0, row=8, sticky="w", padx=5, pady=5)
-    # Create checkboxes for each day
     recurrence_vars = {}
     days = [("Mon", 1), ("Tue", 2), ("Wed", 4), ("Thu", 8), ("Fri", 16), ("Sat", 32), ("Sun", 64)]
     recur_days_frame = tk.Frame(form_frame)
@@ -257,14 +245,12 @@ def open_new_window():
             messagebox.showerror("Error", "Due date cannot be before start date.")
             return
 
-        # Build recurrence_days bitmask from checkboxes
         recurrence_days = 0
         for bit, var in recurrence_vars.items():
             if var.get():
                 recurrence_days |= bit
 
-        # Save to MongoDB
-        insert_result = tasks_col.insert_one({
+        _, doc_ref = tasks_col.add({
             "name": name,
             "course": course,
             "start": start_dt.strftime("%Y-%m-%d %H:%M:%S"),
@@ -273,13 +259,12 @@ def open_new_window():
             "recurrence_days": recurrence_days,
             "reminder_hours": reminder_hours,
             "reminder_sent": 0,
-            "is_recurring_instance": False  # Original task
+            "is_recurring_instance": False
         })
-        
-        # If this is a recurring task, create future instances
+
         if recurrence_days > 0:
-            create_future_recurring_instances(name, course, start_dt, due_dt, recurrence_days, reminder_hours, insert_result.inserted_id)
-        
+            create_future_recurring_instances(name, course, start_dt, due_dt, recurrence_days, reminder_hours, doc_ref.id)
+
         load_tasks()
         new_window.destroy()
 
@@ -292,11 +277,11 @@ def edit_selected_task():
         messagebox.showwarning("Edit Task", "Select a task to edit.")
         return
     task_id = selected_item[0]
-    doc = tasks_col.find_one({"_id": ObjectId(task_id)})
-    if not doc:
+    doc = tasks_col.document(task_id).get()
+    if not doc.exists:
         messagebox.showerror("Error", "Selected task not found.")
         return
-    task = dict(doc)
+    task = doc.to_dict()
 
     edit_window = tk.Toplevel(root)
     edit_window.title("Edit Assignment")
@@ -378,18 +363,15 @@ def edit_selected_task():
             return
 
         try:
-            tasks_col.update_one(
-                {"_id": ObjectId(task_id)},
-                {"$set": {
-                    "name": name,
-                    "course": course,
-                    "start": start_dt_new.strftime("%Y-%m-%d %H:%M:%S"),
-                    "due": due_dt_new.strftime("%Y-%m-%d %H:%M:%S"),
-                    "status": status,
-                    "reminder_hours": reminder_hours,
-                    "reminder_sent": 0
-                }}
-            )
+            tasks_col.document(task_id).update({
+                "name": name,
+                "course": course,
+                "start": start_dt_new.strftime("%Y-%m-%d %H:%M:%S"),
+                "due": due_dt_new.strftime("%Y-%m-%d %H:%M:%S"),
+                "status": status,
+                "reminder_hours": reminder_hours,
+                "reminder_sent": 0
+            })
             load_tasks()
             edit_window.destroy()
         except Exception as e:
@@ -405,26 +387,24 @@ def open_class_view():
     class_window = tk.Toplevel(root)
     class_window.title("View by Class")
     class_window.geometry("800x600")
-    
-    # Class selection frame
+
     selection_frame = tk.Frame(class_window)
     selection_frame.pack(pady=10)
-    
+
     tk.Label(selection_frame, text="Select Class:", font=("Arial", 12)).pack(side=tk.LEFT, padx=5)
-    
+
     classes = [
         "Database Design",
-        "Computer Organization & Assembly Language", 
+        "Computer Organization & Assembly Language",
         "Modern Software Design & Development",
         "Web Application Development",
         "CTC"
     ]
     selected_class = tk.StringVar(value=classes[0])
-    class_dropdown = ttk.Combobox(selection_frame, textvariable=selected_class, values=classes, 
-                                 state="readonly", width=40)
+    class_dropdown = ttk.Combobox(selection_frame, textvariable=selected_class, values=classes,
+                                  state="readonly", width=40)
     class_dropdown.pack(side=tk.LEFT, padx=5)
-    
-    # Treeview for filtered tasks
+
     filtered_tree = ttk.Treeview(class_window, columns=("Name", "Class", "Start", "Due", "Status"), show="headings")
     filtered_tree.heading("Name", text="Assignment Name")
     filtered_tree.heading("Class", text="Class")
@@ -432,25 +412,29 @@ def open_class_view():
     filtered_tree.heading("Due", text="Due Date/Time")
     filtered_tree.heading("Status", text="Status")
     filtered_tree.pack(fill="both", expand=True, padx=10, pady=10)
-    
-    # Configure treeview tags
+
     filtered_tree.tag_configure("Not Started", background="#ff7171")
     filtered_tree.tag_configure("In Progress", background="#fffacd")
     filtered_tree.tag_configure("Completed", background="#d0f0c0")
     filtered_tree.tag_configure("Graded", background="#add8e6")
-    
+
     def load_filtered_tasks():
         filtered_tree.delete(*filtered_tree.get_children())
         selected_class_name = selected_class.get()
-        tasks = tasks_col.find({"course": selected_class_name}).sort("due", 1)
-        
-        for doc in tasks:
-            task = dict(doc)
+        docs = tasks_col.where("course", "==", selected_class_name).stream()
+        task_list = []
+        for doc in docs:
+            t = doc.to_dict()
+            t['_doc_id'] = doc.id
+            task_list.append(t)
+        task_list.sort(key=lambda x: x.get("due", ""))
+
+        for task in task_list:
             status_tag = task.get("status", "Not Started")
             filtered_tree.insert(
                 "",
                 tk.END,
-                iid=str(doc.get("_id")),
+                iid=task['_doc_id'],
                 values=(
                     task.get("name"),
                     task.get("course"),
@@ -460,19 +444,14 @@ def open_class_view():
                 ),
                 tags=(status_tag,)
             )
-    
-    def refresh_tasks():
-        load_filtered_tasks()
-    
-    # Buttons
+
     button_frame = tk.Frame(class_window)
     button_frame.pack(pady=10)
-    
+
     tk.Button(button_frame, text="Load Tasks", command=load_filtered_tasks).pack(side=tk.LEFT, padx=5)
-    tk.Button(button_frame, text="Refresh", command=refresh_tasks).pack(side=tk.LEFT, padx=5)
+    tk.Button(button_frame, text="Refresh", command=load_filtered_tasks).pack(side=tk.LEFT, padx=5)
     tk.Button(button_frame, text="Close", command=class_window.destroy).pack(side=tk.LEFT, padx=5)
-    
-    # Load tasks initially
+
     load_filtered_tasks()
 
 tk.Button(root, text="View by Class", command=open_class_view).pack(pady=5)
@@ -493,7 +472,7 @@ def update_task_status():
         return
     task_id = selected_item[0]
     new_status = status_combobox.get()
-    tasks_col.update_one({"_id": ObjectId(task_id)}, {"$set": {"status": new_status}})
+    tasks_col.document(task_id).update({"status": new_status})
     load_tasks()
 
 tk.Button(status_frame, text="Update Status", command=update_task_status).pack(side=tk.LEFT, padx=5)
@@ -505,7 +484,7 @@ def delete_selected_task():
         messagebox.showwarning("Delete Task", "Select a task.")
         return
     task_id = selected_item[0]
-    tasks_col.delete_one({"_id": ObjectId(task_id)})
+    tasks_col.document(task_id).delete()
     load_tasks()
 
 tk.Button(root, text="Delete Selected Task", command=delete_selected_task).pack(pady=5)
@@ -515,22 +494,20 @@ tk.Button(root, text="Edit Selected Task", command=edit_selected_task).pack(pady
 
 # --- Delete All Tasks Button ---
 def delete_all_tasks():
-    # Show confirmation dialog
     result = messagebox.askyesno(
-        "Delete All Tasks", 
+        "Delete All Tasks",
         "Are you sure you want to delete ALL tasks? This action cannot be undone.",
         icon="warning"
     )
-    
+
     if result:
         try:
-            tasks = tasks_col.find({})
+            docs = list(tasks_col.stream())
             deleted_count = 0
-            
-            for doc in tasks:
-                tasks_col.delete_one({"_id": doc.get("_id")})
+            for doc in docs:
+                doc.reference.delete()
                 deleted_count += 1
-            
+
             load_tasks()
             messagebox.showinfo("Delete All Tasks", f"Successfully deleted {deleted_count} tasks.")
         except Exception as e:
@@ -538,17 +515,14 @@ def delete_all_tasks():
 
 tk.Button(root, text="Delete All Tasks", command=delete_all_tasks).pack(pady=5)
 
-
-# Recurrence is only set when adding new assignments
-
 # --- Reminder Loop ---
 def reminder_loop():
     while True:
         now = datetime.now()
-        tasks = tasks_col.find({})
-        for doc in tasks:
-            task = dict(doc)
-            task_id = str(doc.get("_id"))
+        docs = list(tasks_col.stream())
+        for doc in docs:
+            task = doc.to_dict()
+            task_id = doc.id
             due = datetime.strptime(task["due"], "%Y-%m-%d %H:%M:%S")
             start = datetime.strptime(task["start"], "%Y-%m-%d %H:%M:%S")
             reminder_hours = task.get("reminder_hours", 24)
@@ -556,37 +530,29 @@ def reminder_loop():
             status = task.get("status", "Not Started")
             recurrence_days = task.get("recurrence_days", 0)
 
-            # Reminder logic
             if due - timedelta(hours=reminder_hours) <= now < due and status != "Completed" and reminder_sent == 0:
                 try:
-                    # Send Discord notification
                     reminder_message = f"Task Due Soon: {task['name']}\nDue at: {due.strftime('%m/%d/%y %I:%M %p')}"
                     send_discord_message(reminder_message)
-
-                    # Mark reminder as sent
-                    tasks_col.update_one({"_id": ObjectId(task_id)}, {"$set": {"reminder_sent": 1}})
+                    tasks_col.document(task_id).update({"reminder_sent": 1})
                 except Exception as e:
                     print(f"Failed to send reminder: {e}")
 
-            # Recurring task logic
             if recurrence_days and recurrence_days > 0 and now >= due:
                 next_occurrence = calculate_next_occurrence(due, recurrence_days)
                 if next_occurrence and isinstance(next_occurrence, datetime):
                     duration = due - start
                     new_start = next_occurrence - duration
+                    due_str = next_occurrence.strftime("%Y-%m-%d %H:%M:%S")
 
-                    # Check if next instance already exists
-                    exists = tasks_col.find_one({
-                        "name": task["name"],
-                        "due": next_occurrence.strftime("%Y-%m-%d %H:%M:%S")
-                    })
-                    if not exists:
+                    results = list(tasks_col.where("name", "==", task["name"]).where("due", "==", due_str).limit(1).stream())
+                    if not results:
                         try:
-                            tasks_col.insert_one({
+                            tasks_col.add({
                                 "name": task["name"],
                                 "course": task["course"],
                                 "start": new_start.strftime("%Y-%m-%d %H:%M:%S"),
-                                "due": next_occurrence.strftime("%Y-%m-%d %H:%M:%S"),
+                                "due": due_str,
                                 "status": "Not Started",
                                 "recurrence_days": recurrence_days,
                                 "reminder_hours": task.get("reminder_hours", 24),
@@ -595,7 +561,6 @@ def reminder_loop():
                                 "is_recurring_instance": True
                             })
                             print(f"Created new recurring task instance: {task['name']} for {next_occurrence.strftime('%m/%d/%y %I:%M %p')}")
-                            # Refresh the treeview from the main thread
                             root.after(0, load_tasks, ())
                         except Exception as e:
                             print(f"Failed to create recurring task instance: {e}")
@@ -605,6 +570,5 @@ threading.Thread(target=reminder_loop, daemon=True).start()
 
 # --- System Tray ---
 # setup_tray()
-
 
 root.mainloop()

@@ -1,8 +1,8 @@
 Flask==2.3.3
 firebase-admin==7.1.0
+gunicorn
 python-dotenv==1.0.0
 Werkzeug==2.3.7
-pymongo==4.8.0
 requests
 apscheduler
 pandas
