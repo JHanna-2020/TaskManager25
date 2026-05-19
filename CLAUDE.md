@@ -46,7 +46,7 @@ Both apps require a Firebase service account key JSON file (default: `firebase-c
 Two parallel interfaces share the same Firestore backend:
 
 - **`main.py`** — Tkinter desktop GUI. Runs a background `reminder_loop` thread (polls every 60s) that sends Discord alerts and auto-creates recurring task instances.
-- **`web_app.py`** — Flask web app. Uses APScheduler (60s interval) for the same reminder logic. Runs on port 8080 when invoked directly, port 8081 via `start_web_app.py`.
+- **`web_app.py`** — Flask web app. Uses APScheduler (60s interval) for the same reminder logic. Runs on port 8080 when invoked directly, port 8081 via `start_web_app.py`. Exposes a `/export` route that downloads all tasks as a formatted `.xlsx` file.
 - **`discord_utils.py`** — Single function `send_discord_message()` used by both apps.
 - **`import.py`** — One-off script to bulk-import tasks from `tasks.xlsx` into Firestore.
 - **`reminders.py`** — Unused standalone reminder module (not imported by either app).
@@ -61,7 +61,7 @@ recurrence_days           — bitmask (Mon=1, Tue=2, Wed=4, Thu=8, Fri=16, Sat=3
 reminder_hours            — int, hours before due to send Discord alert
 reminder_sent             — 0 or 1
 is_recurring_instance     — bool
-parent_task_id            — string ObjectId of the original task (recurring instances only)
+parent_task_id            — string Firestore document ID of the original task (recurring instances only)
 ```
 
 Recurring tasks: when a task with `recurrence_days > 0` is created, `create_future_recurring_instances()` pre-generates 12 weeks of instances. The reminder loop also creates the next instance on-the-fly when `now >= due`.
