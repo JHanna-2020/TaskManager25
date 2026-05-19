@@ -1,12 +1,12 @@
 # Task Manager
 
-A comprehensive task management application with synchronized desktop and web interfaces, built with a MongoDB backend, offering Discord reminders, and recurring task support.
+A comprehensive task management application with synchronized desktop and web interfaces, built with a Firebase Firestore backend, offering Discord reminders, and recurring task support.
 
 -----
 
 ## Features
 
-This project provides two distinct interfaces that share the same real-time database.
+This project provides two distinct interfaces that share the same real-time Firestore database.
 
 ### Desktop App (`main.py`)
 
@@ -32,7 +32,7 @@ This project provides two distinct interfaces that share the same real-time data
 ### Prerequisites
 
   * Python 3.8 or higher
-  * A MongoDB Atlas account for the cloud database
+  * A Firebase project with Firestore enabled
   * A Discord account and server for Discord reminders
 
 ### 1\. Clone the Repository
@@ -58,24 +58,21 @@ pip install -r requirements.txt
 pip install -r requirements_web.txt
 ```
 
-### 3\. Configure MongoDB Atlas
+### 3\. Configure Firebase
 
-1.  **Create a free cluster** on [MongoDB Atlas](https://www.mongodb.com/cloud/atlas/register).
-2.  **Create a Database User:** In the "Database Access" section, create a new user. Note the username and password.
-3.  **Whitelist your IP Address:** In the "Network Access" section, add your current IP address or `0.0.0.0/0` to allow access from anywhere (less secure).
-4.  **Get a Connection String:** Go to your cluster's "Overview" tab, click "Connect", choose "Drivers", and copy the Python connection string (`mongodb+srv://...`). You will need this for the `.env` file.
+1.  **Create a Firebase project** at [Firebase Console](https://console.firebase.google.com).
+2.  **Enable Firestore:** Navigate to Firestore Database → Create database.
+3.  **Generate a service account key:** Go to Project Settings → Service Accounts → Generate new private key. Save the downloaded file as `firebase-credentials.json` in the project root.
 
 ### 4\. Create Environment File
 
 Create a file named `.env` in the root of the project directory and add the following variables. Replace the placeholder values with your credentials.
 
 ```env
-# MongoDB Credentials (from Step 3)
-DB_USER=your_mongo_db_username
-DB_PASSWORD=your_mongo_db_password
-DB_NAME=your_database_name
+# Firebase credentials (from Step 3)
+FIREBASE_CREDENTIALS_PATH=firebase-credentials.json
 
-# Discord Webhook URL (for web app reminders)
+# Discord Webhook URL
 DISCORD_WEBHOOK_URL=your_discord_webhook_url
 
 # Flask Web App Secret Key
@@ -102,8 +99,26 @@ Execute the `start_web_app.py` script.
 python start_web_app.py
 ```
 
-  * Access the web app on your local machine at `http://localhost:8080`.
-  * To access from other devices (like a phone) on the same Wi-Fi network, find your computer's local IP address and navigate to `http://<YOUR_IP_ADDRESS>:8080`.
+  * Access the web app on your local machine at `http://localhost:8081`.
+  * To access from other devices (like a phone) on the same Wi-Fi network, find your computer's local IP address and navigate to `http://<YOUR_IP_ADDRESS>:8081`.
+
+### Importing Tasks from Excel
+
+To bulk-import tasks from a spreadsheet:
+
+```bash
+python import.py
+```
+
+This reads from `tasks.xlsx` in the project root and uploads the tasks to Firestore.
+
+### Testing Discord Notifications
+
+To send a test message to your configured Discord channel:
+
+```bash
+python discord_utils.py
+```
 
 -----
 
@@ -113,8 +128,10 @@ python start_web_app.py
 TaskManager25/
 ├── main.py                 # Main script for the desktop (Tkinter) application
 ├── web_app.py              # Core logic for the web (Flask) application
-├── start_web_app.py        # Startup script for the web server
+├── start_web_app.py        # Startup script for the web server (port 8081)
 ├── discord_utils.py        # Handles sending Discord notifications via webhooks
+├── import.py               # Bulk-imports tasks from tasks.xlsx into Firestore
+├── reminders.py            # Standalone reminder module (unused)
 │
 ├── requirements.txt        # Dependencies for the desktop app
 ├── requirements_web.txt    # Dependencies for the web app
@@ -128,21 +145,22 @@ TaskManager25/
 │   ├── view_completed.html # View for completed tasks
 │   └── view_by_class.html  # View for tasks filtered by class
 │
-├── .env                    # (You create this) Stores secret credentials
-└── README.md               # This file
+├── firebase-credentials.json  # (You create this) Firebase service account key
+├── .env                       # (You create this) Stores secret credentials
+└── README.md                  # This file
 ```
 
 -----
 
 ## Troubleshooting
 
-  * **MongoDB Connection Error:**
-      * Ensure your `DB_USER` and `DB_PASSWORD` in the `.env` file are correct.
-      * Verify that your current IP address is whitelisted in MongoDB Atlas under "Network Access".
-      * Check that your internet connection is active.
+  * **Firebase Connection Error:**
+      * Ensure `firebase-credentials.json` exists in the project root and is a valid service account key.
+      * Verify that `FIREBASE_CREDENTIALS_PATH` in your `.env` file points to the correct file.
+      * Confirm that Firestore is enabled in your Firebase project (not just the Realtime Database).
   * **Discord Reminders Not Working:**
       * Double-check that your `DISCORD_WEBHOOK_URL` in the `.env` file is correct.
       * Run `python discord_utils.py` to send a test message.
   * **Web App Not Accessible from Other Devices:**
       * Make sure your computer and the other device are on the same Wi-Fi network.
-      * Check that your computer's firewall is not blocking incoming connections on port `8080`.
+      * Check that your computer's firewall is not blocking incoming connections on port `8081`.
